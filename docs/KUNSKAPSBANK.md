@@ -87,8 +87,10 @@ styckegränser.
 
 ## Modellen
 
-Chatten är det enda i appen som går ut på nätet, och bara när en fråga ställs.
-Transkribering och röstanalys körs alltid lokalt.
+Transkribering och röstanalys körs alltid lokalt. Chattens modell används
+också för sammanfattningen efter mötet, uppgiftsletningen i mejl, lägesbilden
+och insikterna under samtal — med en molnmodell vald går det materialet dit i
+bakgrunden. Det står under ⌘, och går att stänga av, se README.
 
 Fem leverantörer stöds:
 
@@ -173,3 +175,15 @@ därför på ett varv till: uppmätt låg en faktura **28 gånger** i indexet �
 959 rader varav 132 unika — och kopiorna fyllde topplistan och skev
 BM25-statistiken. Numera glöms varje bilagas källa innan den läggs in igen,
 och provsviten Omindexering indexerar om tre gånger och kräver samma antal.
+
+## Källor glöms via en sidotabell
+
+`källa` står UNINDEXED i FTS-tabellen, så `DELETE … WHERE källa = ?` var en
+genomsökning av hela indexet för varje ändrad fil. Nu håller tabellen
+`dokumentkällor` rowid → källa med index, och ett äldre index fylls på en
+gång när det öppnas. Källor vars fil inte finns längre — ett möte som döpts
+om eller flyttats — glöms vid nästa indexering. Indexeringen och den globala
+sökningen är inte längre bundna till huvudaktören: de körs i bakgrunden, och
+arkivets läsningar är `nonisolated` med en cache av avkodade möte.json på
+ändringstid och storlek. Inbäddningarna hålls i minnet mellan frågorna så
+länge antalet i tabellen är detsamma.

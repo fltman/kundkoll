@@ -104,21 +104,17 @@ actor Mailen {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
         p.arguments = [skript.path, adress, String(antal)]
-        let ut = Pipe(), fel = Pipe()
-        p.standardOutput = ut
-        p.standardError = fel
-        try p.run()
-        let data = ut.fileHandleForReading.readDataToEndOfFile()
-        let felData = fel.fileHandleForReading.readDataToEndOfFile()
-        p.waitUntilExit()
+        // Mail som står och väntar på en behörighetsfråga fick tidigare
+        // sökningen att hänga för evigt.
+        let utfall = try await Underprocess.kör(p, tidsgräns: 3 * 60)
 
-        if p.terminationStatus != 0 {
-            let text = String(data: felData, encoding: .utf8) ?? ""
+        if utfall.kod != 0 {
+            let text = utfall.feltext
             throw text.contains("not allowed") || text.contains("-1743")
                 ? Fel.nekad
-                : Fel.frånMail(text.trimmingCharacters(in: .whitespacesAndNewlines))
+                : Fel.frånMail(text)
         }
-        return Array(Self.tolka(String(data: data, encoding: .utf8) ?? "").prefix(antal * 2))
+        return Array(Self.tolka(utfall.uttext).prefix(antal * 2))
     }
 
     /// Fälten är åtskilda av ASCII 31, eftersom ämnesrader gärna innehåller

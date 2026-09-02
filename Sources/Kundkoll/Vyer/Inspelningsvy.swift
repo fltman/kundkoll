@@ -95,7 +95,12 @@ struct Inspelningsvy: View {
 
             Spacer()
             HStack {
-                Button("Avbryt") { Inspelningsfönster.stäng() }
+                Button("Avbryt") {
+                    // Ett fel som lämnas kvar i sessionen låste tidigare
+                    // nästa «Spela in» tills appen startats om.
+                    session.återställ()
+                    Inspelningsfönster.stäng()
+                }
                 Spacer()
                 Button(action: starta) {
                     Label("Spela in", systemImage: "record.circle")
@@ -130,6 +135,15 @@ struct Inspelningsvy: View {
             }
             .padding(.horizontal, 16).padding(.vertical, 12)
             Divider()
+            if let varning = session.livevarning {
+                Label(varning, systemImage: "exclamationmark.triangle")
+                    .font(.callout)
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 16).padding(.vertical, 8)
+                Divider()
+            }
 
             HStack(spacing: 0) {
                 ScrollViewReader { rulle in
@@ -229,6 +243,15 @@ struct Inspelningsvy: View {
                         .font(.caption).foregroundStyle(.tertiary)
                 }
                 .frame(maxWidth: 340)
+            }
+            if let fel = session.efterbearbetningsfel {
+                Label(fel, systemImage: "exclamationmark.triangle")
+                    .font(.callout)
+                    .foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: 340)
+                Text("Livetranskriptet är sparat. Högerklicka på mötet i listan för att köra om.")
+                    .font(.caption).foregroundStyle(.tertiary)
             }
 
             HStack {

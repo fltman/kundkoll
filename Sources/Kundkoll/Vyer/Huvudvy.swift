@@ -39,6 +39,25 @@ struct Huvudvy: View {
         let möte: Kalendern.Möte?
         var id: String { möte?.id ?? kund.namn }
     }
+    /// Kund eller projekt som ska döpas om respektive kastas.
+    @State private var namnbyte: Post?
+    @State private var attKasta: Post?
+    enum Post: Identifiable {
+        case kund(Kund)
+        case projekt(Projekt, Kund)
+        var id: String {
+            switch self {
+            case .kund(let k): k.id
+            case .projekt(let p, _): p.id
+            }
+        }
+        var namn: String {
+            switch self {
+            case .kund(let k): k.namn
+            case .projekt(let p, _): p.namn
+            }
+        }
+    }
 
     /// Vad som är valt i sidopanelen.
     enum Val: Hashable {
@@ -121,6 +140,11 @@ struct Huvudvy: View {
                 let möte = kalender.möten(tillDagar: 7).first { $0.id == mid }
                 briefing = Briefingval(kund: kund, möte: möte)
             }
+            // «Mötet är klart» ska öppna mötet, inte bara kunden.
+            if let väg = n.userInfo?["inspelning"] as? String,
+               let träff = arkiv.inspelningar(för: kund).first(where: { $0.1.path == väg }) {
+                palettMöte = Palettmöte(kund: kund, inspelning: träff.0, mapp: träff.1)
+            }
         }
         // Påminnelserna en kvart före kundmöten bokas om varje gång kalendern
         // ändras, så att flyttade möten följer med och avbokade tystnar.
@@ -128,6 +152,36 @@ struct Huvudvy: View {
         .onChange(of: kalender.ändringar) { planeraBriefingar() }
         .sheet(isPresented: $visaNyKund) { nyKundBlad }
         .sheet(isPresented: $visaNyckel) { Modellvy() }
+        .sheet(item: $namnbyte) { post in namnblad(för: post) }
+        .confirmationDialog(
+            "Flytta till papperskorgen?",
+            isPresented: Binding(get: { attKasta != nil }, set: { if !$0 { attKasta = nil } }),
+            presenting: attKasta
+        ) { post in
+            Button("Flytta till papperskorgen", role: .destructive) { kasta(post) }
+            Button("Avbryt", role: .cancel) { attKasta = nil }
+        } message: { post in
+            switch post {
+            case .kund(let k):
+                Text("\(k.namn) med alla inspelningar, anteckningar, kontakter och uppgifter "
+                     + "flyttas till papperskorgen. Du kan ta tillbaka mappen därifrån.")
+            case .projekt(let p, _):
+                Text("\(p.namn) med inspelningar och anteckningar flyttas till papperskorgen. "
+                     + "Uppgifterna blir kvar hos kunden, utan projekt.")
+            }
+        }
+        // En kund som döpts om eller tagits bort i Finder får inte lämna
+        // ett val som pekar på en mapp som inte finns.
+        .onChange(of: arkiv.kunder) {
+            switch val {
+            case .kund(let k) where !arkiv.kunder.contains(k):
+                val = arkiv.kunder.first.map { .kund($0) }
+            case .projekt(let p) where !arkiv.kunder.contains(where: { $0.namn == p.kundnamn }):
+                val = arkiv.kunder.first.map { .kund($0) }
+            default:
+                break
+            }
+        }
         .onReceive(NotificationCenter.default.publisher(for: .nyKund)) { _ in visaNyKund = true }
         .onReceive(NotificationCenter.default.publisher(for: .sök)) { _ in visaSök = true }
         .onReceive(NotificationCenter.default.publisher(for: .visaNyckel)) { _ in visaNyckel = true }
@@ -143,6 +197,57 @@ struct Huvudvy: View {
             Text(kund.namn)
         }
         .padding(.vertical, 2)
+        .contextMenu {
+            Button("Byt namn …") { namnbyte = .kund(kund) }
+            Button("Visa i Finder") { NSWorkspace.shared.open(kund.mapp) }
+            Divider()
+            Button("Flytta till papperskorgen …", role: .destructive) { attKasta = .kund(kund) }
+        }
+    }
+
+    private func projektrad(_ p: Projekt, hos kund: Kund) -> some View {
+        Label(p.namn, systemImage: "folder")
+            .contextMenu {
+                Button("Byt namn …") { namnbyte = .projekt(p, kund) }
+                Button("Visa i Finder") { NSWorkspace.shared.open(p.mapp) }
+                Divider()
+                Button("Flytta till papperskorgen …", role: .destructive) {
+                    attKasta = .projekt(p, kund)
+                }
+            }
+    }
+
+    @ViewBuilder
+    private func namnblad(för post: Post) -> some View {
+        switch post {
+        case .kund(let k):
+            Namnblad(rubrik: "Byt namn på \(k.namn)", nuvarande: k.namn,
+                     förklaring: "Mappen döps om, och allt som bär namnet skrivs om: "
+                        + "inspelningar, uppgifter, noter, mejlstämpeln och Obsidians valvlista. "
+                        + "Kör Obsidian behöver den startas om.") { nytt in
+                let ny = try arkiv.döpOm(kund: k, till: nytt)
+                val = .kund(ny)
+            }
+        case .projekt(let p, let k):
+            Namnblad(rubrik: "Byt namn på \(p.namn)", nuvarande: p.namn,
+                     förklaring: "Mappen döps om, och inspelningar, uppgifter, tidslogg, "
+                        + "möteskopplingar och chattar följer med till det nya namnet.") { nytt in
+                let nytt = try arkiv.döpOm(projekt: p, hos: k, till: nytt)
+                val = .projekt(nytt)
+            }
+        }
+    }
+
+    private func kasta(_ post: Post) {
+        attKasta = nil
+        switch post {
+        case .kund(let k):
+            try? arkiv.taBort(kund: k)
+            if valdKund == k { val = arkiv.kunder.first.map { .kund($0) } }
+        case .projekt(let p, let k):
+            try? arkiv.taBort(projekt: p, hos: k)
+            if val?.projekt == p { val = .kund(k) }
+        }
     }
 
     /// Bokar briefingnotiser för alla kundmatchade möten den närmaste veckan.
@@ -184,7 +289,7 @@ struct Huvudvy: View {
                 } else {
                     DisclosureGroup(isExpanded: bindning(för: kund)) {
                         ForEach(projekt) { p in
-                            Label(p.namn, systemImage: "folder")
+                            projektrad(p, hos: kund)
                                 .tag(Val.projekt(p))
                         }
                     } label: {
@@ -281,7 +386,7 @@ struct Huvudvy: View {
                         }
                     }
                     Divider()
-                    Button("AI-modell och nyckel …") { visaNyckel = true }
+                    Button("Inställningar …") { visaNyckel = true }
                         .keyboardShortcut(",", modifiers: .command)
                 } label: {
                     Label("Mer", systemImage: "ellipsis.circle")

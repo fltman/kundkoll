@@ -22,9 +22,8 @@ struct Transkriptvy: View {
     @State private var ny = ""
     @State private var sammanfattar = false
     @State private var fel: String?
-    /// Sätts medan hela inspelningen görs om — transkribering, röster,
-    /// sammanfattning.
-    @State private var körOmSteg: String?
+    @ObservedObject private var kö = Importkö.delad
+    @EnvironmentObject private var session: Inspelningssession
     @StateObject private var spelare = Yttrandespelare()
     @State private var hovrad: UUID?
     /// Närmast föregående möte i samma serie, när det finns ett.
@@ -93,6 +92,8 @@ struct Transkriptvy: View {
         .frame(height: 660)
         .onAppear(perform: läsUppgifter)
         .onDisappear { spelare.sluta() }
+        // En omkörning i bakgrunden skriver möte.json; vyn ska följa med.
+        .onChange(of: arkiv.sparningar) { läsOmFrånDisk() }
         .sheet(isPresented: $visaRöster) {
             Röstvy(kund: kund, mapp: mapp, inspelning: inspelning) { inspelning = $0 }
         }
@@ -112,7 +113,13 @@ struct Transkriptvy: View {
                     .foregroundStyle(.secondary)
             }
             Spacer()
-            if !inspelning.efterbearbetad {
+            if let arkivfel = inspelning.arkivfel {
+                Märke(text: "fel", färg: .red, ikon: "exclamationmark.triangle")
+                    .help("Efterbearbetningen misslyckades: \(arkivfel)")
+            } else if inspelning.avbruten && körOmSteg == nil {
+                Märke(text: "avbruten", färg: .orange, ikon: "pause")
+                    .help("Efterbearbetningen avbröts. Kör om den med pilknappen.")
+            } else if !inspelning.efterbearbetad {
                 Märke(text: "live", färg: .orange)
             }
             // Knappen ska finnas även när uppdelningen inte gav några
@@ -139,21 +146,20 @@ struct Transkriptvy: View {
                 Image(systemName: "folder")
             }
             .help("Visa i Finder")
-            if inspelning.enspårig {
-                // Fel språk vid importen ska inte kräva en ny import — ljudet
-                // finns ju kvar.
-                Menu {
-                    Button("Transkribera om på svenska") { transkriberaOm("sv") }
-                    Button("Transkribera om på engelska") { transkriberaOm("en") }
-                    Button("Transkribera om — avgör själv") { transkriberaOm(nil) }
-                } label: {
-                    Image(systemName: "arrow.trianglehead.2.clockwise")
-                }
-                .menuStyle(.borderlessButton)
-                .fixedSize()
-                .disabled(körOmSteg != nil)
-                .help("Kör om transkribering, röster och sammanfattning på valt språk")
+            // Fel språk, en motor som saknades, ett pass som avbröts: ljudet
+            // finns kvar, så allt går att köra om — även för möten som
+            // spelats in i appen, med båda spåren.
+            Menu {
+                Button("Transkribera om på svenska") { transkriberaOm("sv") }
+                Button("Transkribera om på engelska") { transkriberaOm("en") }
+                Button("Transkribera om — avgör själv") { transkriberaOm(nil) }
+            } label: {
+                Image(systemName: "arrow.trianglehead.2.clockwise")
             }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+            .disabled(körOmSteg != nil)
+            .help("Kör om transkribering, röster och sammanfattning på valt språk")
             Button {
                 visaChatt.toggle()
                 Inställningar.mötesChattPå = visaChatt
@@ -260,6 +266,12 @@ struct Transkriptvy: View {
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
+            if let orsak = inspelning.sammanfattningsfel {
+                Label(orsak, systemImage: "exclamationmark.triangle")
+                    .font(.callout)
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             Button(sammanfattar ? "Sammanfattar …" : "Sammanfatta mötet") {
                 Task { await sammanfatta() }
             }
@@ -444,42 +456,53 @@ struct Transkriptvy: View {
         guard !text.isEmpty else { return }
         let till = Uppföljning.mottagare(för: inspelning,
                                          kontakter: arkiv.kontakter(för: kund))
-        do {
-            try Uppföljning.öppnaUtkast(ämne: "Uppföljning: \(inspelning.titel)",
-                                        text: text, till: till)
-        } catch {
-            fel = error.localizedDescription
-        }
-    }
-
-    /// Gör om hela inspelningen från ljudet: transkribering på valt språk,
-    /// röstuppdelning, sammanfattning. Titeln behålls.
-    private func transkriberaOm(_ språk: String?) {
-        guard körOmSteg == nil else { return }
-        körOmSteg = "Förbereder …"
-        fel = nil
-        spelare.sluta()
-        let placering: Placering = projekt.map { .projekt($0) } ?? .kund(kund)
-        let profiler = arkiv.röstprofiler(för: kund)
-        let titel = inspelning.titel
+        let ämne = "Uppföljning: \(inspelning.titel)"
         Task {
             do {
-                let ny = try await Import().slutför(
-                    mapp: mapp, placering: placering, profiler: profiler,
-                    titel: titel, språk: språk,
-                    vidLäge: { l in
-                        Task { @MainActor in
-                            körOmSteg = l.steg
-                                + (l.andel.map { " · \(Int($0 * 100)) %" } ?? "")
-                        }
-                    })
-                inspelning = ny
-                läsUppgifter()
+                try await Uppföljning.öppnaUtkast(ämne: ämne, text: text, till: till)
             } catch {
                 fel = error.localizedDescription
             }
-            körOmSteg = nil
         }
+    }
+
+    /// Var en omkörning av det här mötet står, om en pågår.
+    private var körOmSteg: String? {
+        if kö.aktuell?.mapp == mapp {
+            return kö.andel.map { "\(kö.steg) · \(Int($0 * 100)) %" } ?? kö.steg
+        }
+        if kö.väntande.contains(where: { $0.mapp == mapp }) { return "I kö …" }
+        if session.bearbetadMapp == mapp { return "Efterbearbetas …" }
+        return nil
+    }
+
+    /// Gör om hela inspelningen från ljudet: transkribering på valt språk,
+    /// röstuppdelning, sammanfattning. Mötet behåller sitt id, så chattar
+    /// och kopplingar överlever; namn som satts för hand lärs in som
+    /// röstavtryck först, så att personerna känns igen i den nya
+    /// uppdelningen. Arbetet går i kön längst ned, och vyn läser om sig
+    /// själv när det är klart.
+    private func transkriberaOm(_ språk: String?) {
+        guard körOmSteg == nil else { return }
+        fel = nil
+        spelare.sluta()
+        let placering: Placering = projekt.map { .projekt($0) } ?? .kund(kund)
+        let i = inspelning
+        Task {
+            if !i.röstnamn.isEmpty {
+                _ = await Röstanalys().lärIn(i, mapp: mapp, kund: kund, arkiv: arkiv)
+            }
+            kö.köaOmkörning(i, mapp: mapp, placering: placering, kund: kund, språk: språk)
+        }
+    }
+
+    /// Läser om mötet från möte.json, när något skrivit den i bakgrunden.
+    private func läsOmFrånDisk() {
+        guard let data = try? Data(contentsOf: mapp.appending(path: "möte.json")),
+              let ny = try? JSONDecoder.kundkoll.decode(Inspelning.self, from: data),
+              ny.id == inspelning.id, ny != inspelning else { return }
+        inspelning = ny
+        läsUppgifter()
     }
 
     private func sammanfatta() async {

@@ -76,7 +76,7 @@ struct Minveckavy: View {
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(.secondary)
             }
-            VStack(spacing: 0) {
+            LazyVStack(spacing: 0) {
                 ForEach(Array(ivarje.enumerated()), id: \.element.uppgift.id) { i, rad in
                     self.rad(rad)
                     if i < ivarje.count - 1 { Divider() }

@@ -34,6 +34,7 @@ struct Chattpanel: View {
     /// Mappar som just nu genomsöks av en agent.
     @State private var söker: Set<String> = []
     @State private var sparadeSom: String?
+    @State private var bekräftaBorttagning = false
 
     private let chatt = Chatt()
     private let kodagent = Kodagent()
@@ -60,7 +61,9 @@ struct Chattpanel: View {
                     }
                     if !samtal.tomt {
                         Divider()
-                        Button("Ta bort det här samtalet", role: .destructive, action: taBort)
+                        Button("Ta bort det här samtalet …", role: .destructive) {
+                            bekräftaBorttagning = true
+                        }
                     }
                 } label: {
                     HStack(spacing: 4) {
@@ -193,6 +196,12 @@ struct Chattpanel: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(.background)
         .sheet(isPresented: $visaNyckel) { Modellvy() }
+        .confirmationDialog("Ta bort samtalet?", isPresented: $bekräftaBorttagning) {
+            Button("Ta bort", role: .destructive, action: taBort)
+            Button("Avbryt", role: .cancel) {}
+        } message: {
+            Text("«\(samtal.titel)» tas bort. Det går inte att ångra.")
+        }
         .task { await förbered() }
     }
 
@@ -400,8 +409,13 @@ struct Chattpanel: View {
         förbereder = true
         status = "Läser igenom materialet …"
         do {
-            let b = try Kunskapsbank(kund: kund)
-            let r = try Indexering.kör(för: kund, bank: b)
+            // Indexbygget läser alla möte.json; det ska inte ske på huvudtråden.
+            let kund = kund, arkiv = arkiv
+            let (b, r) = try await Task.detached(priority: .userInitiated) {
+                let b = try Kunskapsbank(kund: kund)
+                let r = try Indexering.kör(för: kund, bank: b, arkiv: arkiv)
+                return (b, r)
+            }.value
             bank = b
             var rader = b.antal == 0
                 ? "Inget material att söka i än"
@@ -456,7 +470,7 @@ struct Chattpanel: View {
             // Mötet först: frågan gäller det som sades där. Sökningen sker
             // här inne eftersom betydelsedelen behöver Ollama och är asynkron.
             let träffar = (mötesträff.map { [$0] } ?? []) + extraUnderlag
-                + (await bank.bästaSök(sökt))
+                + (await Task.detached { await bank.bästaSök(sökt) }.value)
             senasteTräffar = träffar
             do {
                 let svar = try await chatt.fråga(
@@ -491,23 +505,35 @@ struct Chattpanel: View {
 
     private func sökIMapp(_ mapp: Kopplad, fråga text: String) {
         söker.insert(mapp.väg)
+        // Svaret tar tiotals sekunder. Har man bytt samtal under tiden ska
+        // det landa i det samtal frågan ställdes i, inte i det som råkar
+        // vara öppet.
+        let ställtI = samtal.id
         Task {
             defer { söker.remove(mapp.väg) }
+            let meddelande: Chatt.Meddelande
             do {
                 let svar = try await kodagent.fråga(
                     text, i: mapp.url, om: kund.namn, projekt: projekt?.namn)
-                samtal.meddelanden.append(Chatt.Meddelande(
-                    roll: .assistent, text: svar.text,
-                    ursprung: .mapp, mapp: mapp.visatNamn))
-                spara()
+                meddelande = Chatt.Meddelande(roll: .assistent, text: svar.text,
+                                              ursprung: .mapp, mapp: mapp.visatNamn)
             } catch {
                 // Att agenten inte kunde svara ska inte dölja det svar som kom
                 // ur kunskapsbanken.
-                samtal.meddelanden.append(Chatt.Meddelande(
+                meddelande = Chatt.Meddelande(
                     roll: .assistent,
                     text: "Kunde inte söka i \(mapp.visatNamn): \(error.localizedDescription)",
-                    ursprung: .mapp, mapp: mapp.visatNamn))
+                    ursprung: .mapp, mapp: mapp.visatNamn)
+            }
+            if samtal.id == ställtI {
+                samtal.meddelanden.append(meddelande)
                 spara()
+            } else if var annat = arkiv.samtal(för: kund, projekt: projekt?.namn,
+                                               möte: möte?.id.uuidString)
+                        .first(where: { $0.id == ställtI }) {
+                annat.meddelanden.append(meddelande)
+                try? arkiv.spara(annat, för: kund)
+                tidigare = arkiv.samtal(för: kund, projekt: projekt?.namn, möte: möte?.id.uuidString)
             }
         }
     }

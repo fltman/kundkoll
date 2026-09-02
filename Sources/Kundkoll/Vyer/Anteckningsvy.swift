@@ -20,6 +20,9 @@ struct Anteckningsvy: View {
     @State private var text = ""
     @State private var sparaJobb: Task<Void, Never>?
     @State private var meddelande: String?
+    /// Filens ändringstid när texten lästes in — för att märka om någon
+    /// annan skrivit filen under tiden.
+    @State private var lästÄndrad: Date = .distantPast
 
     var body: some View {
         VStack(spacing: 0) {
@@ -86,8 +89,13 @@ struct Anteckningsvy: View {
         .onAppear {
             titel = anteckning.titel
             text = anteckning.text
+            lästÄndrad = Self.ändringstid(anteckning.fil) ?? Date()
         }
         .onDisappear { spara() }
+    }
+
+    private static func ändringstid(_ url: URL) -> Date? {
+        try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
     }
 
     private var miniatyrer: some View {
@@ -198,9 +206,22 @@ struct Anteckningsvy: View {
 
     private func spara() {
         guard text != anteckning.text else { return }
+        // Har någon annan skrivit filen sedan den lästes in — Obsidian, till
+        // exempel? Då skrevs den versionen tidigare över utan ett ord. Nu
+        // läggs den bredvid, och det man själv skriver tar filen.
+        if let påDisk = Self.ändringstid(anteckning.fil), påDisk > lästÄndrad,
+           let extern = try? String(contentsOf: anteckning.fil, encoding: .utf8),
+           extern != anteckning.text, extern != text {
+            let kopia = anteckning.fil.deletingLastPathComponent()
+                .appending(path: "\(anteckning.titel) (ändrad utanför appen).md")
+            try? extern.write(to: kopia, atomically: true, encoding: .utf8)
+            meddelande = "Filen ändrades utanför appen medan du skrev. Den versionen ligger "
+                + "bredvid som «\(anteckning.titel) (ändrad utanför appen)»."
+        }
         anteckning.text = text
         anteckning.ändrad = Date()
         try? arkiv.spara(anteckning)
+        lästÄndrad = Self.ändringstid(anteckning.fil) ?? Date()
         vidÄndring()
     }
 

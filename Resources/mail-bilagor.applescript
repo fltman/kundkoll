@@ -36,7 +36,9 @@ on run argv
 							repeat with b in (every mail attachment of m)
 								if raknare >= grans then exit repeat
 								try
-									set namn to name of b
+									-- Namnet kommer fran avsandaren. Ett snedstreck
+									-- i det hade pekat ut ur mappen.
+									set namn to my rensaNamn(name of b)
 									set stl to file size of b
 									-- Stora filer hoppas over: de ar sallan text.
 									-- Signaturbilder och kalenderfiler sorteras
@@ -70,6 +72,24 @@ on varAttSpara(namn)
 	if gemena starts with "image00" and (count of namn) <= 12 then return false
 	return true
 end varAttSpara
+
+-- Snedstreck och kolon blir bindestreck, och ett namn som borjar med punkt
+-- far ett understreck fore sig, sa att filen aldrig hamnar utanfor
+-- bilagemappen eller blir dold.
+on rensaNamn(t)
+	set ut to ""
+	repeat with c in characters of t
+		set c to c as string
+		if c is "/" or c is ":" then
+			set ut to ut & "-"
+		else
+			set ut to ut & c
+		end if
+	end repeat
+	if ut starts with "." then set ut to "_" & ut
+	if ut is "" then set ut to "bilaga"
+	return ut
+end rensaNamn
 
 on gemener(t)
 	set ut to ""

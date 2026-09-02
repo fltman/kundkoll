@@ -29,6 +29,9 @@ final class Kunskapsbank {
 
     private var db: OpaquePointer?
     private let fil: URL
+    /// Alla inbäddningar i minnet, giltiga så länge antalet i tabellen är
+    /// detsamma. Läses annars om från disk vid varje fråga.
+    private var vektorcache: (antal: Int, rader: [(id: Int64, vektor: [Float])])?
 
     init(kund: Kund) throws {
         let mapp = kund.mapp.appending(path: ".kundkoll")
@@ -68,7 +71,25 @@ final class Kunskapsbank {
                 id INTEGER PRIMARY KEY,
                 vektor BLOB NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS dokumentkällor (
+                id INTEGER PRIMARY KEY,
+                källa TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS dokumentkällor_källa ON dokumentkällor(källa);
             """)
+        // Sidotabellen kom till senare: källan står UNINDEXED i FTS-tabellen,
+        // så att glömma en källa var en genomsökning av hela indexet. Ett
+        // index byggt före tabellen fylls på en gång.
+        var s: OpaquePointer?
+        sqlite3_prepare_v2(db, "SELECT (SELECT count(*) FROM dokumentkällor), (SELECT count(*) FROM dokument)",
+                           -1, &s, nil)
+        if sqlite3_step(s) == SQLITE_ROW,
+           sqlite3_column_int(s, 0) == 0, sqlite3_column_int(s, 1) > 0 {
+            sqlite3_finalize(s)
+            try kör("INSERT INTO dokumentkällor(id, källa) SELECT rowid, källa FROM dokument")
+        } else {
+            sqlite3_finalize(s)
+        }
     }
 
     // MARK: - Indexering
@@ -88,19 +109,32 @@ final class Kunskapsbank {
 
     /// Tar bort allt som kommer från en källa, så att omindexering inte dubblar.
     func glöm(källa: String) throws {
-        var v: OpaquePointer?
-        sqlite3_prepare_v2(db,
-            "DELETE FROM vektorer WHERE id IN (SELECT rowid FROM dokument WHERE källa = ?)",
-            -1, &v, nil)
-        bind(v, 1, källa)
-        sqlite3_step(v)
-        sqlite3_finalize(v)
+        for sql in [
+            "DELETE FROM vektorer WHERE id IN (SELECT id FROM dokumentkällor WHERE källa = ?)",
+            "DELETE FROM dokument WHERE rowid IN (SELECT id FROM dokumentkällor WHERE källa = ?)",
+            "DELETE FROM dokumentkällor WHERE källa = ?",
+            "DELETE FROM källor WHERE källa = ?",
+        ] {
+            var s: OpaquePointer?
+            sqlite3_prepare_v2(db, sql, -1, &s, nil)
+            bind(s, 1, källa)
+            sqlite3_step(s)
+            sqlite3_finalize(s)
+        }
+        vektorcache = nil
+    }
 
+    /// Källorna som följs på ändringstid. En fil som inte finns längre — ett
+    /// möte som döpts om eller flyttats — lämnar annars sina stycken kvar i
+    /// indexet för alltid.
+    func spåradeKällor() -> [String] {
         var s: OpaquePointer?
         defer { sqlite3_finalize(s) }
-        sqlite3_prepare_v2(db, "DELETE FROM dokument WHERE källa = ?", -1, &s, nil)
-        bind(s, 1, källa)
-        sqlite3_step(s)
+        guard sqlite3_prepare_v2(db, "SELECT källa FROM källor", -1, &s, nil) == SQLITE_OK
+        else { return [] }
+        var ut: [String] = []
+        while sqlite3_step(s) == SQLITE_ROW { ut.append(text(s, 0)) }
+        return ut
     }
 
     func läggTill(titel: String, text: String, typ: String, källa: String, tid: Date?) throws {
@@ -116,6 +150,15 @@ final class Kunskapsbank {
         bind(s, 4, källa)
         bind(s, 5, tid.map { String($0.timeIntervalSince1970) } ?? "")
         guard sqlite3_step(s) == SQLITE_DONE else { throw Fel.sql("insert misslyckades") }
+
+        let rad = sqlite3_last_insert_rowid(db)
+        var k: OpaquePointer?
+        defer { sqlite3_finalize(k) }
+        sqlite3_prepare_v2(db, "INSERT OR REPLACE INTO dokumentkällor(id, källa) VALUES (?,?)",
+                           -1, &k, nil)
+        sqlite3_bind_int64(k, 1, rad)
+        bind(k, 2, källa)
+        sqlite3_step(k)
     }
 
     /// Noterar att källan är indexerad i sin nuvarande form.
@@ -171,11 +214,19 @@ final class Kunskapsbank {
                                   unsafeBitCast(-1, to: sqlite3_destructor_type.self))
         }
         guard sqlite3_step(s) == SQLITE_DONE else { throw Fel.sql("vektor sparades inte") }
+        vektorcache = nil
     }
 
-    /// Alla inbäddningar. Ett par hundra stycken à en kilobyte — de ryms i
-    /// minnet med god marginal, och cosinus över dem tar millisekunder.
+    /// Alla inbäddningar. De hålls i minnet mellan frågorna så länge antalet
+    /// i tabellen är detsamma — tusentals stycken à fyra kilobyte lästes
+    /// annars från disk vid varje fråga.
     func vektorer() -> [(id: Int64, vektor: [Float])] {
+        var räknare: OpaquePointer?
+        sqlite3_prepare_v2(db, "SELECT count(*) FROM vektorer", -1, &räknare, nil)
+        let antal = sqlite3_step(räknare) == SQLITE_ROW ? Int(sqlite3_column_int(räknare, 0)) : 0
+        sqlite3_finalize(räknare)
+        if let c = vektorcache, c.antal == antal { return c.rader }
+
         var s: OpaquePointer?
         defer { sqlite3_finalize(s) }
         guard sqlite3_prepare_v2(db, "SELECT id, vektor FROM vektorer", -1, &s, nil) == SQLITE_OK
@@ -189,6 +240,7 @@ final class Kunskapsbank {
             }
             ut.append((sqlite3_column_int64(s, 0), v))
         }
+        vektorcache = (antal, ut)
         return ut
     }
 

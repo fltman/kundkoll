@@ -65,21 +65,14 @@ actor Kodagent {
         miljö["PATH"] = (miljö["PATH"] ?? "") + ":/opt/homebrew/bin:/usr/local/bin"
         p.environment = miljö
 
-        let ut = Pipe(), fel = Pipe()
-        p.standardOutput = ut
-        p.standardError = fel
-
         let t0 = Date()
-        try p.run()
-        let data = ut.fileHandleForReading.readDataToEndOfFile()
-        let felData = fel.fileHandleForReading.readDataToEndOfFile()
-        p.waitUntilExit()
+        // Riktiga frågor tog 23 och 34 sekunder. Fem minuter räcker med
+        // marginal; en agent som hängt sig lämnade tidigare snurran för evigt.
+        let utfall = try await Underprocess.kör(p, tidsgräns: 5 * 60)
 
-        let svar = (String(data: data, encoding: .utf8) ?? "")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard p.terminationStatus == 0, !svar.isEmpty else {
-            let text = String(data: felData, encoding: .utf8) ?? ""
-            throw Fel.misslyckades(text.trimmingCharacters(in: .whitespacesAndNewlines))
+        let svar = utfall.uttext.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard utfall.kod == 0, !svar.isEmpty else {
+            throw Fel.misslyckades(utfall.felsvans())
         }
         return Svar(text: svar, mapp: mapp.lastPathComponent,
                     sekunder: Date().timeIntervalSince(t0))

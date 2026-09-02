@@ -196,9 +196,11 @@ enum Arkivtranskribering {
 
 /// Whisper via Apples MLX. Samma pythonmiljö som röstanalysen lånar.
 enum MlxWhisper {
+    /// Miljön kan pekas ut under ⌘,; annars ~/Projekt/transcriber/venv.
     static var venv: URL {
-        FileManager.default.homeDirectoryForCurrentUser
-            .appending(path: "Projekt/transcriber/venv")
+        Inställningar.pythonMiljö.map { URL(fileURLWithPath: $0) }
+            ?? FileManager.default.homeDirectoryForCurrentUser
+                .appending(path: "Projekt/transcriber/venv")
     }
     static var körbar: URL { venv.appending(path: "bin/mlx_whisper") }
 
@@ -251,9 +253,12 @@ enum MlxWhisper {
             }
         }
 
-        try p.run()
-        await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
-            p.terminationHandler = { _ in c.resume() }
+        do {
+            try await Underprocess.väntaIn(p, namn: "mlx_whisper",
+                                           tidsgräns: max(15 * 60, (totalLängd ?? 0) * 4))
+        } catch {
+            rör.fileHandleForReading.readabilityHandler = nil
+            throw error
         }
         rör.fileHandleForReading.readabilityHandler = nil
         vidFramsteg?(Whisper.Framsteg(andel: 1, senasteRad: ""))
@@ -319,7 +324,7 @@ enum Molntranskribering {
         vidFramsteg?(Whisper.Framsteg(andel: 0, senasteRad: "Komprimerar ljudet …"))
         // WAV är för stort att skicka: 39 minuter väger 75 MB och gränsen är
         // 25. AAC i m4a klarar samma ljud på ett par megabyte.
-        let m4a = try komprimera(fil)
+        let m4a = try await komprimera(fil)
         defer { try? FileManager.default.removeItem(at: m4a) }
         let storlek = (try? FileManager.default.attributesOfItem(atPath: m4a.path)[.size] as? Int) ?? 0
         guard storlek < 24_000_000 else {
@@ -414,15 +419,15 @@ enum Molntranskribering {
 
     // MARK: Gemensamt
 
-    private static func komprimera(_ fil: URL) throws -> URL {
+    private static func komprimera(_ fil: URL) async throws -> URL {
         let ut = FileManager.default.temporaryDirectory
             .appending(path: "kundkoll-\(UUID().uuidString).m4a")
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/usr/bin/afconvert")
         p.arguments = ["-f", "m4af", "-d", "aac", fil.path, ut.path]
         p.standardError = FileHandle.nullDevice
-        try p.run()
-        p.waitUntilExit()
+        p.standardOutput = FileHandle.nullDevice
+        try await Underprocess.väntaIn(p, tidsgräns: 5 * 60)
         guard p.terminationStatus == 0 else {
             throw Enkeltfel("Ljudet gick inte att komprimera inför uppladdningen.")
         }

@@ -7,6 +7,7 @@ enum Tester {
 
     static func kör() -> Int32 {
         arkivet()
+        robusthet()
         ljud()
         whisper()
         liveinsikter()
@@ -1981,13 +1982,13 @@ enum Tester {
         try! arkiv.sparaMail([mejl], bilagor: [bilaga], för: kund)
 
         let bank = try! Kunskapsbank(kund: kund)
-        _ = try! Indexering.kör(för: kund, bank: bank)
+        _ = try! Indexering.kör(för: kund, bank: bank, arkiv: arkiv)
         let efterEn = bank.antal
 
         // Mailcachen skrivs om — som efter varje hämtning — och indexeras om.
         try! arkiv.sparaMail([mejl], bilagor: [bilaga], för: kund)
-        _ = try! Indexering.kör(för: kund, bank: bank)
-        _ = try! Indexering.kör(för: kund, bank: bank)
+        _ = try! Indexering.kör(för: kund, bank: bank, arkiv: arkiv)
+        _ = try! Indexering.kör(för: kund, bank: bank, arkiv: arkiv)
 
         Prov.lika(bank.antal, efterEn,
                   "att indexera om ger inga dubbletter (\(bank.antal) mot \(efterEn))")
@@ -2434,6 +2435,166 @@ enum Tester {
                 Prov.kolla(riktig.brister.isEmpty,
                            "den riktiga whisper.cpp-uppsättningen är komplett\(riktig.brister.isEmpty ? "" : ": \(riktig.brister)")")
             }
+        }
+    }
+}
+
+// MARK: - Robusthet
+
+extension Tester {
+
+    /// Det som robusthetsgranskningen fann: wav-huvuden, cachen, namnbyten,
+    /// mejlstämpeln, bilagornas sökvägar och underprocesserna.
+    static func robusthet() {
+        Prov.svit("Robusthet")
+        let fm = FileManager.default
+
+        func läs<T: Decodable>(_ typ: T.Type, _ json: String) -> T? {
+            try? JSONDecoder.kundkoll.decode(typ, from: Data(json.utf8))
+        }
+
+        do {   // ett wav-huvud som lämnats med längden noll
+            let fil = fm.temporaryDirectory.appending(path: "kundkoll-test-\(UUID().uuidString).wav")
+            defer { try? fm.removeItem(at: fil) }
+            let prov = [Float](repeating: 0.1, count: 16_000)      // en sekund
+            var data = Wav.data(av: [])                              // huvud med längden noll
+            data.append(Wav.data(av: prov).suffix(from: Wav.huvudlängd))
+            try! data.write(to: fil)
+            Prov.lika(Wav.längd(av: fil), 1.0, "längden räknas ur filens storlek, inte huvudet")
+            Prov.kolla((try? Wav.rättaHuvud(i: fil)) == true, "ett huvud med längden noll rättas")
+            let ljud = try? AVAudioFile(forReading: fil)
+            Prov.lika(ljud.map { Int($0.length) }, 16_000, "och filen läses som en sekund ljud")
+            Prov.kolla((try? Wav.rättaHuvud(i: fil)) == false, "ett riktigt huvud lämnas orört")
+        }
+
+        do {   // spårskrivaren skriver om huvudet under gång
+            let fil = fm.temporaryDirectory.appending(path: "kundkoll-test-\(UUID().uuidString).wav")
+            defer { try? fm.removeItem(at: fil) }
+            let s = try! Spårskrivare(fil: fil)
+            s.skriv([Float](repeating: 0.05, count: 16_000 * 6))
+            // Utan stäng(): som efter en krasch mitt i mötet.
+            let sekunder = (try? AVAudioFile(forReading: fil)).map { Double($0.length) / 16_000 } ?? 0
+            Prov.kolla(sekunder >= 5, "ljudet är läsbart även om skrivaren aldrig stängts (\(sekunder) s)")
+            s.stäng()
+        }
+
+        do {   // nya fält i möte.json
+            let i = läs(Inspelning.self,
+                        #"{"titel":"T","inledd":"2026-09-01T09:00:00Z","längd":5,"kund":"Acme","liveYttranden":[]}"#)
+            Prov.lika(i?.bearbetas, false, "bearbetas får sitt standardvärde")
+            Prov.kolla(i?.arkivfel == nil && i?.röstmetod == nil,
+                       "felfälten saknas utan att fälla läsningen")
+            let avbruten = läs(Inspelning.self,
+                               #"{"titel":"T","inledd":"2026-09-01T09:00:00Z","längd":5,"kund":"Acme","liveYttranden":[],"bearbetas":true}"#)
+            Prov.lika(avbruten?.avbruten, true, "ett pass som avbröts känns igen")
+        }
+
+        do {   // mejlstämpeln flyttas bara över det som gåtts igenom
+            func mejl(_ d: String, _ t: String) -> Mailen.Mejl {
+                Mailen.Mejl(datum: Uppgift.dag(d), datumText: d, avsändare: "a", ämne: t,
+                            meddelandeID: t, konto: "k", låda: "INBOX", riktning: "från", text: "text")
+            }
+            let lista = [mejl("2026-09-03", "c"), mejl("2026-09-01", "a"), mejl("2026-09-02", "b")]
+            let ut = Uppgiftssamling.attGåIgenom(lista, sedan: Uppgift.dag("2026-09-01")!)
+            Prov.lika(ut.map(\.ämne), ["b", "c"], "bara mejl efter stämpeln, äldst först")
+        }
+
+        do {   // bilagor utanför mappen sorteras bort
+            let mapp = URL(fileURLWithPath: "/tmp/kundkoll-bilagor")
+            let rad = ["Offert", "x.pdf", "/tmp/kundkoll-bilagor/x.pdf", "10"].joined(separator: "\u{1F}")
+            let elak = ["Offert", "y.pdf", "/tmp/kundkoll-bilagor/../../Library/y.pdf", "10"]
+                .joined(separator: "\u{1F}")
+            let ut = Bilagor.tolka(rad + "\n" + elak, inom: mapp)
+            Prov.lika(ut.count, 1, "en sökväg som pekar ut ur mappen sorteras bort")
+            Prov.lika(ut.first?.namn, "x.pdf", "den riktiga behålls")
+        }
+
+        do {   // cachen följer filens ändringstid
+            let (arkiv, rot) = tillfälligt()
+            defer { try? fm.removeItem(at: rot) }
+            let kund = try! arkiv.skapaKund(namn: "Acme")
+            let mapp = try! arkiv.nyInspelningsmapp(placering: .kund(kund), titel: "Möte", datum: Date())
+            var i = Inspelning(titel: "Möte", inledd: Date(), längd: 5, kund: "Acme", projekt: nil,
+                               mikrofon: nil, liveYttranden: [], arkivYttranden: nil)
+            try! arkiv.spara(i, i: mapp)
+            Prov.lika(arkiv.inspelningar(för: kund).first?.0.titel, "Möte", "inspelningen listas")
+            Prov.lika(arkiv.inspelningar(för: kund).first?.0.titel, "Möte", "och en gång till, ur cachen")
+            // Skriven utanför arkivet, som Obsidian eller Finder skulle göra.
+            i.titel = "Nytt namn"
+            try! JSONEncoder.kundkoll.encode(i).write(to: mapp.appending(path: "möte.json"), options: .atomic)
+            Prov.lika(arkiv.inspelningar(för: kund).first?.0.titel, "Nytt namn",
+                      "en fil som skrivits utanför appen läses om")
+        }
+
+        do {   // namnbyten och flyttar drar med sig allt som nycklas på namnet
+            let (arkiv, rot) = tillfälligt()
+            defer { try? fm.removeItem(at: rot) }
+            let kund = try! arkiv.skapaKund(namn: "Acme")
+            let p = try! arkiv.skapaProjekt(namn: "Lager", hos: kund)
+            let mapp = try! arkiv.nyInspelningsmapp(placering: .projekt(p), titel: "Uppstart", datum: Date())
+            let i = Inspelning(titel: "Uppstart", inledd: Date(), längd: 5, kund: "Acme", projekt: "Lager",
+                               mikrofon: nil, liveYttranden: [], arkivYttranden: nil)
+            try! arkiv.spara(i, i: mapp)
+            try! arkiv.läggTill([Uppgift(vad: "Skicka offerten", ursprung: .möte, källa: mapp.path,
+                                         källtitel: "Uppstart", projekt: "Lager")], för: kund)
+
+            let ny = try! arkiv.döpOm(kund: kund, till: "Acme Industries")
+            Prov.kolla(fm.fileExists(atPath: ny.mapp.path) && !fm.fileExists(atPath: kund.mapp.path),
+                       "kundmappen döps om")
+            Prov.lika(arkiv.inspelningar(för: ny).first?.0.kund, "Acme Industries",
+                      "inspelningen bär det nya kundnamnet")
+            Prov.kolla(arkiv.uppgifter(för: ny).first?.källa?.hasPrefix(ny.mapp.path) == true,
+                       "uppgiftens källa pekar in i den nya mappen")
+            Prov.kolla(fm.fileExists(atPath: ny.mapp.appending(path: "Acme Industries.md").path),
+                       "ingångsnoten döps om")
+
+            let nyttP = try! arkiv.döpOm(projekt: arkiv.projekt(för: ny).first!, hos: ny, till: "Nytt lager")
+            Prov.lika(arkiv.inspelningar(för: ny).first?.0.projekt, "Nytt lager",
+                      "inspelningen följer projektets nya namn")
+            Prov.lika(arkiv.uppgifter(för: ny).first?.projekt, "Nytt lager", "uppgiften likaså")
+            Prov.kolla(arkiv.uppgifter(för: ny).first?.källa?.hasPrefix(nyttP.mapp.path) == true,
+                       "och dess källa pekar in i den nya projektmappen")
+
+            let (gammal, gammalMapp) = arkiv.inspelningar(för: ny).first!
+            let (omdöpt, nyMapp) = try! arkiv.döpOm(gammal, i: gammalMapp, till: "Kickoff", hos: ny)
+            Prov.lika(omdöpt.titel, "Kickoff", "mötet får ny titel")
+            Prov.kolla(nyMapp.lastPathComponent.hasSuffix("Kickoff"), "och mappen döps om")
+            Prov.lika(omdöpt.id, gammal.id, "men behåller sitt id")
+            Prov.lika(arkiv.uppgifter(för: ny).first?.källtitel, "Kickoff", "uppgiften följer mötets nya titel")
+            Prov.lika(arkiv.uppgifter(för: ny).first?.källa, nyMapp.path, "och pekar på den nya mappen")
+
+            let (flyttad, mapp2) = try! arkiv.flytta(omdöpt, från: nyMapp, till: .kund(ny), hos: ny)
+            Prov.kolla(flyttad.projekt == nil && mapp2.path.hasPrefix(ny.samtalsmapp.path),
+                       "mötet flyttas till kundnivån")
+            Prov.lika(arkiv.uppgifter(för: ny).first?.projekt, nil, "uppgiften släpper projektet")
+            Prov.lika(arkiv.inspelningar(för: ny).count, 1, "mötet listas en gång efter flytten")
+
+            try! arkiv.taBort(projekt: nyttP, hos: ny)
+            Prov.kolla(!fm.fileExists(atPath: nyttP.mapp.path), "projektet flyttas till papperskorgen")
+            Prov.lika(arkiv.projekt(för: ny).count, 0, "och finns inte i listan")
+        }
+
+        do {   // underprocesser: utdata läses till slut, tidsgränsen håller
+            let sem = DispatchSemaphore(value: 0)
+            nonisolated(unsafe) var ut = ""
+            nonisolated(unsafe) var bröts = false
+            Task.detached {
+                let p = Process()
+                p.executableURL = URL(fileURLWithPath: "/bin/echo")
+                p.arguments = ["hej"]
+                ut = (try? await Underprocess.kör(p, tidsgräns: 10))?.uttext
+                    .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                let s = Process()
+                s.executableURL = URL(fileURLWithPath: "/bin/sleep")
+                s.arguments = ["5"]
+                do { _ = try await Underprocess.kör(s, tidsgräns: 0.3) }
+                catch is Underprocess.Fel { bröts = true }
+                catch {}
+                sem.signal()
+            }
+            sem.wait()
+            Prov.lika(ut, "hej", "utdata läses till slut")
+            Prov.kolla(bröts, "en process som inte blir klar avslutas vid tidsgränsen")
         }
     }
 }

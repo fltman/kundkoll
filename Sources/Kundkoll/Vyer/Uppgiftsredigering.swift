@@ -15,6 +15,7 @@ struct Uppgiftsredigering: View {
     @EnvironmentObject private var arkiv: Arkivet
     @Environment(\.dismiss) private var stäng
     @State private var läggerIPåminnelser = false
+    @State private var bekräftaBorttagning = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -84,11 +85,17 @@ struct Uppgiftsredigering: View {
 
             Divider()
             HStack {
-                Button("Ta bort", role: .destructive) {
-                    try? arkiv.taBort(uppgift, för: kund)
-                    vidSparat()
-                    stäng()
-                }
+                Button("Ta bort …", role: .destructive) { bekräftaBorttagning = true }
+                    .confirmationDialog("Ta bort uppgiften?", isPresented: $bekräftaBorttagning) {
+                        Button("Ta bort", role: .destructive) {
+                            try? arkiv.taBort(uppgift, för: kund)
+                            vidSparat()
+                            stäng()
+                        }
+                        Button("Avbryt", role: .cancel) {}
+                    } message: {
+                        Text("«\(uppgift.vad)» tas bort från tavlan. Det går inte att ångra.")
+                    }
                 if uppgift.påminnelse == nil {
                     Button(läggerIPåminnelser ? "Lägger in …" : "Lägg i Påminnelser") {
                         läggIPåminnelser()

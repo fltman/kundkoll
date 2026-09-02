@@ -21,6 +21,11 @@ struct Inspelningsrad: View {
                     Text(session.titel)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
+                    if let varning = session.livevarning {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.orange)
+                            .help(varning)
+                    }
                 } else if session.efterbearbetar {
                     ProgressView().controlSize(.small)
                     Text(session.analyserarRöster

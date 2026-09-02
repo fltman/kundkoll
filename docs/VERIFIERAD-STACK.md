@@ -343,3 +343,48 @@ felfri engelska. Därför:
 - Livefönstren skickar `language` per anrop till whisper-server.
 - Mötesvyn kan **transkribera om** en importerad inspelning på valt språk —
   ljudet finns ju kvar. Även headless: `--transkribera-om <mapp> [sv|en|auto]`.
+
+## ⚠️ Wav-huvudet skrevs först vid stopp
+
+Spårskrivaren fyllde i längderna i wav-huvudet när filen stängdes. En krasch
+eller ⌘Q mitt i ett möte lämnade huvudet med längden noll, och whisper,
+AVAudioFile och spelaren läste filen som tom fast ljudet låg där. Nu skrivs
+huvudet om var femte sekund ljud, `Wav.rättaHuvud` rättar ett trasigt huvud
+ur filens storlek innan arkivpasset, och en avslutshanterare stoppar en
+pågående inspelning innan appen går ned. Provat i sviten Robusthet: en fil
+med huvudlängd noll läses som en sekund ljud efter rättningen.
+
+## ⚠️ whisper-server överlevde appen
+
+`Whisper.avsluta()` anropades aldrig. Uppmätt 2026-09-02: 33 föräldralösa
+whisper-server på maskinen efter två dagars byggen, en per appstart. Litet
+minne var för sig — modellen är minnesmappad — men de försvinner aldrig.
+Avslutshanteraren i `Appdelegat` dödar servern när appen stängs.
+
+## Underprocesser väntas in utan att låsa trådar
+
+`waitUntilExit` inne i en async-funktion blockerade en av Swifts
+samarbetstrådar — pyannote i minuter — och ett osascript som stod och
+väntade på en behörighetsfråga hängde mejlsökningen för evigt. `Underprocess`
+väntar in avslutet med en continuation, läser rören på GCD-trådar och
+avslutar processen vid tidsgräns eller avbrott. Tidsgränserna: osascript
+3 respektive 10 minuter, python 30 minuter, whisper-cli och mlx fyra gånger
+ljudets längd (minst en kvart), claude 5 minuter.
+
+## Arkivpasset är ett, och det går att köra om
+
+Efter mötet, efter en import, vid omkörning från mötesvyn och när ett
+avbrutet pass tas upp igen körs samma `Efterbearbetning`. Den skriver
+`bearbetas` i möte.json medan den pågår och `arkivfel` om den faller — så
+att ett möte aldrig mer står som «live» för alltid utan förklaring. Faller
+ett spår behålls livetranskriptet: ett arkivtranskript med bara ena parten
+vore en försämring förklädd till förbättring.
+
+## Sökvägar i två skepnader
+
+`/var` är en länk till `/private/var`. Det som listas ur en mapp kommer
+upplöst medan det som byggts ur kundmappen inte gör det, och
+`resolvingSymlinksInPath` lämnar en väg som inte finns orörd — precis
+läget efter en flytt. `Arkivet.kanonisk` tar bort `/private` för hand, och
+alla jämförelser av sökvägar går genom den. Sviten Robusthet fällde de
+första försöken på just detta.

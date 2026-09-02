@@ -4,7 +4,11 @@ import Foundation
 ///
 /// Bara det som ändrats sedan sist indexeras om, så att en kund med hundratals
 /// timmar transkript inte behöver läsas från början varje gång chatten öppnas.
-@MainActor
+///
+/// Inte bunden till huvudaktören: arkivets läsningar är rena filläsningar,
+/// och det här körs i bakgrunden. Bundet dit låg hela indexbygget — alla
+/// möte.json med sina transkript — på huvudtråden när chatten öppnades, när
+/// en kund visades och i samma ögonblick en inspelning startade.
 enum Indexering {
 
     /// Ungefär så här långa stycken blir transkriptet. Kort nog att en träff
@@ -18,9 +22,14 @@ enum Indexering {
     }
 
     @discardableResult
-    static func kör(för kund: Kund, bank: Kunskapsbank) throws -> Resultat {
+    static func kör(för kund: Kund, bank: Kunskapsbank, arkiv: Arkivet) throws -> Resultat {
         var r = Resultat()
-        let arkiv = Arkivet.shared
+
+        // Källor vars filer inte finns längre — ett möte som döpts om eller
+        // flyttats — lämnade annars sina stycken kvar i indexet för alltid.
+        for källa in bank.spåradeKällor() where !FileManager.default.fileExists(atPath: källa) {
+            try bank.glöm(källa: källa)
+        }
 
         // Transkript
         for (inspelning, mapp) in arkiv.inspelningar(för: kund) {

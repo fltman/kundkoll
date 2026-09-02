@@ -15,12 +15,16 @@ actor Whisper {
         /// Silero, som avgör om det ens finns tal i ljudet.
         var vadmodell: String
 
-        static let standard = Sökvägar(
-            rot: FileManager.default.homeDirectoryForCurrentUser.appending(path: "Projekt/whisper.cpp"),
-            livemodell: "kb_whisper_ggml_small.bin",
-            arkivmodell: "kb_whisper_ggml_medium.bin",
-            vadmodell: "ggml-silero-v5.1.2.bin"
-        )
+        /// Roten kan pekas ut under ⌘,; annars ~/Projekt/whisper.cpp.
+        static var standard: Sökvägar {
+            Sökvägar(
+                rot: Inställningar.whisperRot.map { URL(fileURLWithPath: $0) }
+                    ?? FileManager.default.homeDirectoryForCurrentUser.appending(path: "Projekt/whisper.cpp"),
+                livemodell: "kb_whisper_ggml_small.bin",
+                arkivmodell: "kb_whisper_ggml_medium.bin",
+                vadmodell: "ggml-silero-v5.1.2.bin"
+            )
+        }
 
         var server: URL { rot.appending(path: "build/bin/whisper-server") }
         var cli: URL { rot.appending(path: "build/bin/whisper-cli") }
@@ -194,9 +198,9 @@ actor Whisper {
         let rör = Pipe()
         p.standardOutput = vidFramsteg == nil ? FileHandle.nullDevice : rör
         p.standardError = FileHandle.nullDevice
+        let längd = totalLängd ?? Self.längd(av: fil)
 
         if let vidFramsteg {
-            let längd = totalLängd ?? Self.längd(av: fil)
             nonisolated(unsafe) var rest = ""
             vidFramsteg(Framsteg(andel: 0, senasteRad: ""))
             rör.fileHandleForReading.readabilityHandler = { handtag in
@@ -212,9 +216,14 @@ actor Whisper {
             }
         }
 
-        try p.run()
-        await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
-            p.terminationHandler = { _ in c.resume() }
+        // Fyra gånger realtid är gott om marginal — arkivmodellen går i
+        // fjorton — men en modell som fastnat ska inte få stå för evigt.
+        do {
+            try await Underprocess.väntaIn(p, namn: "whisper-cli",
+                                           tidsgräns: max(15 * 60, längd * 4))
+        } catch {
+            rör.fileHandleForReading.readabilityHandler = nil
+            throw error
         }
         rör.fileHandleForReading.readabilityHandler = nil
         // Sista segmentet väntar annars för evigt på en hakparentes som aldrig

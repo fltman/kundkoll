@@ -230,4 +230,47 @@ enum Wav {
         for p in prov { skriv(Int16(max(-1, min(1, p)) * 32767)) }
         return d
     }
+
+    /// Huvudet som `data(av:)` skriver är 44 byte: RIFF-längden står på
+    /// plats 4 och datalängden på plats 40.
+    static let huvudlängd = 44
+
+    /// Ljudets längd i sekunder, räknat ur filens storlek. Huvudet får inte
+    /// avgöra: en fil som lämnades med längden noll bär ändå sitt ljud.
+    static func längd(av fil: URL, frekvens: Double = Ljudbuffring.målfrekvens) -> Double {
+        guard let storlek = try? FileManager.default
+            .attributesOfItem(atPath: fil.path)[.size] as? Int else { return 0 }
+        return Double(max(0, storlek - huvudlängd)) / (frekvens * 2)
+    }
+
+    /// Rättar längderna i huvudet så att de stämmer med filens storlek.
+    ///
+    /// Spårskrivaren fyller i längderna först när den stänger filen. Kraschar
+    /// appen, eller stängs den mitt i ett möte, står det noll — och då läser
+    /// whisper, AVAudioFile och spelaren filen som tom fast ljudet ligger
+    /// där. Ger sant om något behövde rättas.
+    @discardableResult
+    static func rättaHuvud(i fil: URL) throws -> Bool {
+        let handtag = try FileHandle(forUpdating: fil)
+        defer { try? handtag.close() }
+        let storlek = Int(try handtag.seekToEnd())
+        guard storlek >= huvudlängd else { return false }
+        try handtag.seek(toOffset: 0)
+        guard let huvud = try handtag.read(upToCount: huvudlängd), huvud.count == huvudlängd,
+              huvud[0..<4] == Data("RIFF".utf8), huvud[8..<12] == Data("WAVE".utf8),
+              huvud[36..<40] == Data("data".utf8) else { return false }
+        let data = UInt32(storlek - huvudlängd)
+        let riff = UInt32(storlek - 8)
+        let harData = huvud[40..<44].withUnsafeBytes { $0.loadUnaligned(as: UInt32.self) }.littleEndian
+        let harRiff = huvud[4..<8].withUnsafeBytes { $0.loadUnaligned(as: UInt32.self) }.littleEndian
+        guard harData != data || harRiff != riff else { return false }
+        func skriv(_ v: UInt32, vid offset: UInt64) throws {
+            try handtag.seek(toOffset: offset)
+            var le = v.littleEndian
+            try handtag.write(contentsOf: Data(bytes: &le, count: 4))
+        }
+        try skriv(riff, vid: 4)
+        try skriv(data, vid: 40)
+        return true
+    }
 }

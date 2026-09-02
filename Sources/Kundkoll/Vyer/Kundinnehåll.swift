@@ -37,8 +37,7 @@ struct Kundinnehåll: View {
     @State private var visaMötesplockare = false
     /// Mötes-id → projektnamn, valt för hand.
     @State private var möteskopplingar: [String: String] = [:]
-    @State private var slutför: URL?
-    @State private var slutförsteg = ""
+    @ObservedObject private var kö = Importkö.delad
 
     enum Flik: String, CaseIterable, Identifiable {
         case översikt, attGöra, inspelningar, anteckningar, mail
@@ -411,12 +410,19 @@ struct Kundinnehåll: View {
                                 .font(.caption).foregroundStyle(.secondary)
                         }
                         Spacer()
-                        if slutför == rad.mapp {
+                        if kö.gäller(rad.mapp) {
                             ProgressView().controlSize(.small)
-                            Text(slutförsteg).font(.caption).foregroundStyle(.secondary)
+                            Text(kö.aktuell?.mapp == rad.mapp ? kö.steg : "I kö …")
+                                .font(.caption).foregroundStyle(.secondary)
                         } else {
-                            Button("Gör klart") { görKlart(rad.mapp) }
-                                .disabled(slutför != nil)
+                            // Språket väljs här: en import som föll på fel
+                            // språk ska inte behöva göras om från början.
+                            Menu("Gör klart") {
+                                Button("På svenska") { görKlart(rad.mapp, språk: "sv") }
+                                Button("På engelska") { görKlart(rad.mapp, språk: "en") }
+                                Button("Låt motorn avgöra") { görKlart(rad.mapp, språk: nil) }
+                            }
+                            .fixedSize()
                             Button {
                                 try? arkiv.kastaInspelning(i: rad.mapp)
                                 läsOm()
@@ -435,22 +441,19 @@ struct Kundinnehåll: View {
         }
     }
 
-    private func görKlart(_ mapp: URL) {
-        slutför = mapp
-        slutförsteg = "Förbereder"
-        let profiler = arkiv.röstprofiler(för: kund)
-        Task {
-            let importör = Import()
-            _ = try? await importör.slutför(
-                mapp: mapp, placering: .kund(kund), profiler: profiler,
-                vidLäge: { l in Task { @MainActor in slutförsteg = l.steg } })
-            slutför = nil
-            läsOm()
-        }
+    /// Mappen säger var inspelningen hör hemma: under Samtal, eller under
+    /// ett projekts Inspelningar. Tidigare hamnade allt på kundnivå, och
+    /// projektkopplingen försvann.
+    private func görKlart(_ mapp: URL, språk: String?) {
+        let förälder = mapp.deletingLastPathComponent().standardizedFileURL
+        let placering: Placering = projekt
+            .first { $0.inspelningsmapp.standardizedFileURL == förälder }
+            .map { .projekt($0) } ?? .kund(kund)
+        kö.köaSlutförande(mapp: mapp, placering: placering, kund: kund, språk: språk)
     }
 
     private func inspelningslista(_ rader: [(Inspelning, URL)]) -> some View {
-        Inspelningslista(rader: rader,
+        Inspelningslista(kund: kund, rader: rader,
                          öppna: { öppnad = Öppnad(inspelning: $0, mapp: $1) },
                          kasta: { attKasta = Öppnad(inspelning: $0, mapp: $1) })
     }
@@ -675,6 +678,9 @@ struct Kundinnehåll: View {
     }
 
     private func hämtaMejl() async {
+        // Timern, återkomsten till appen och knappen kan alla vilja hämta.
+        // Två sökningar samtidigt skrev tidigare över varandras resultat.
+        if case .hämtar = mejlLäge { return }
         let adresser = Array(Set(arkiv.kontakter(för: kund).flatMap(\.epost))).prefix(5)
         guard !adresser.isEmpty else { return }
         mejlLäge = .hämtar("Söker i Mail …")
@@ -720,7 +726,17 @@ struct Kundinnehåll: View {
         hittade = hittade.filter { sedda.insert($0.fil).inserted }
         guard !hittade.isEmpty else { return }
 
+        // Text som redan lästs ut behålls: bildtolkningen tar sekunder per
+        // bilaga, och den kördes tidigare om på allt vid varje uppdatering.
+        var kända: [String: Bilagor.Bilaga] = [:]
+        for b in bilagor + (arkiv.mailcache(för: kund)?.bilagor ?? []) where b.text != nil {
+            kända[b.fil] = b
+        }
         for (i, b) in hittade.enumerated() {
+            if let k = kända[b.fil], k.storlek == b.storlek {
+                hittade[i].text = k.text
+                continue
+            }
             mejlLäge = .hämtar("Läser bilaga \(i + 1) av \(hittade.count) — \(b.namn)")
             hittade[i].text = await Bilagor.text(ur: b)
         }
@@ -738,26 +754,51 @@ struct Kundinnehåll: View {
     /// Sökningen bygger inga index — den läser dem som finns. Utan det här
     /// blev nyhämtade mejl och bilagor osökbara tills chatten öppnats.
     private func indexeraIBakgrunden() {
-        let kund = kund
+        let kund = kund, arkiv = arkiv
         Task.detached(priority: .utility) {
-            guard let bank = try? await Kunskapsbank(kund: kund) else { return }
-            try? await Indexering.kör(för: kund, bank: bank)
+            guard let bank = try? Kunskapsbank(kund: kund) else { return }
+            try? Indexering.kör(för: kund, bank: bank, arkiv: arkiv)
             await Inbäddare.kör(bank: bank)
         }
     }
 }
 
 /// Lista över inspelningar, med papperskorg vid hovring.
+///
+/// Raden säger också hur mötet mår: om arkivpasset pågår, föll eller
+/// avbröts — och en omkörning finns i högerklicksmenyn. Tidigare stod ett
+/// möte vars bearbetning gått fel som «live» för alltid, utan väg tillbaka.
 struct Inspelningslista: View {
+    let kund: Kund
     let rader: [(Inspelning, URL)]
     var öppna: (Inspelning, URL) -> Void
     var kasta: (Inspelning, URL) -> Void
 
+    @EnvironmentObject private var arkiv: Arkivet
     @EnvironmentObject private var session: Inspelningssession
+    @ObservedObject private var kö = Importkö.delad
     @State private var hovrad: Int?
+    @State private var namnbyte: Byte?
+
+    struct Byte: Identifiable {
+        let inspelning: Inspelning
+        let mapp: URL
+        var id: UUID { inspelning.id }
+    }
 
     var body: some View {
-        VStack(spacing: 0) {
+        lista
+            .sheet(item: $namnbyte) { v in
+                Namnblad(rubrik: "Byt namn på mötet", nuvarande: v.inspelning.titel,
+                         förklaring: "Mappen döps om med den nya titeln, och uppgifterna "
+                            + "som kom ur mötet följer med.") { nytt in
+                    _ = try arkiv.döpOm(v.inspelning, i: v.mapp, till: nytt, hos: kund)
+                }
+            }
+    }
+
+    private var lista: some View {
+        LazyVStack(spacing: 0) {
             ForEach(Array(rader.enumerated()), id: \.offset) { i, rad in
                 ZStack(alignment: .trailing) {
                     Button { öppna(rad.0, rad.1) } label: { innehåll(rad.0, mapp: rad.1) }
@@ -774,6 +815,15 @@ struct Inspelningslista: View {
                 .onHover { hovrar in hovrad = hovrar ? i : (hovrad == i ? nil : hovrad) }
                 .contextMenu {
                     Button("Visa i Finder") { NSWorkspace.shared.open(rad.1) }
+                    if !bearbetas(rad.1) {
+                        Button("Byt namn …") { namnbyte = Byte(inspelning: rad.0, mapp: rad.1) }
+                        flyttmeny(rad.0, rad.1)
+                        Menu("Efterbearbeta igen") {
+                            Button("På svenska") { körOm(rad.0, rad.1, språk: "sv") }
+                            Button("På engelska") { körOm(rad.0, rad.1, språk: "en") }
+                            Button("Låt motorn avgöra") { körOm(rad.0, rad.1, språk: nil) }
+                        }
+                    }
                     Divider()
                     Button("Flytta till papperskorgen", role: .destructive) { kasta(rad.0, rad.1) }
                 }
@@ -796,6 +846,12 @@ struct Inspelningslista: View {
                     if let steg = pågår(mapp) {
                         ProgressView().controlSize(.mini)
                         Text(steg).foregroundStyle(.orange)
+                    } else if let fel = i.arkivfel {
+                        Märke(text: "fel", färg: .red, ikon: "exclamationmark.triangle")
+                            .help("Efterbearbetningen misslyckades: \(fel)\nHögerklicka för att köra om.")
+                    } else if i.avbruten {
+                        Märke(text: "avbruten", färg: .orange, ikon: "pause")
+                            .help("Efterbearbetningen avbröts. Högerklicka för att köra om.")
                     } else if !i.efterbearbetad {
                         Märke(text: "live", färg: .orange)
                     }
@@ -812,15 +868,69 @@ struct Inspelningslista: View {
         .contentShape(.rect)
     }
 
+    private func bearbetas(_ mapp: URL) -> Bool {
+        session.bearbetadMapp == mapp || kö.gäller(mapp)
+    }
+
+    /// Kundnivån, kundens projekt, och andra kunder med sina projekt. Ett
+    /// möte som startats hos fel kund gick tidigare bara att rätta i Finder,
+    /// med handredigerad JSON.
+    private func flyttmeny(_ i: Inspelning, _ mapp: URL) -> some View {
+        Menu("Flytta till") {
+            if i.projekt != nil {
+                Button("\(kund.namn) — kundnivå") { flytta(i, mapp, till: .kund(kund)) }
+            }
+            ForEach(arkiv.projekt(för: kund).filter { $0.namn != i.projekt }) { p in
+                Button(p.namn) { flytta(i, mapp, till: .projekt(p)) }
+            }
+            let andra = arkiv.kunder.filter { $0 != kund }
+            if !andra.isEmpty {
+                Divider()
+                ForEach(andra) { annan in
+                    Menu(annan.namn) {
+                        Button("Kundnivå") { flytta(i, mapp, till: .kund(annan)) }
+                        ForEach(arkiv.projekt(för: annan)) { p in
+                            Button(p.namn) { flytta(i, mapp, till: .projekt(p)) }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func flytta(_ i: Inspelning, _ mapp: URL, till placering: Placering) {
+        guard !bearbetas(mapp) else { return }
+        _ = try? arkiv.flytta(i, från: mapp, till: placering, hos: kund)
+    }
+
     /// Var bearbetningen står, för raden vars inspelning just nu jobbas på.
     private func pågår(_ mapp: URL) -> String? {
-        guard session.bearbetadMapp == mapp else { return nil }
-        if session.sammanfattar { return "Sammanfattar …" }
-        if session.analyserarRöster { return "Delar upp röster …" }
-        if session.efterbearbetar {
-            return "Transkriberar \(Int(session.efterbearbetningsandel * 100)) % …"
+        if session.bearbetadMapp == mapp {
+            if session.sammanfattar { return "Sammanfattar …" }
+            if session.analyserarRöster { return "Delar upp röster …" }
+            if session.efterbearbetar {
+                return "Transkriberar \(Int(session.efterbearbetningsandel * 100)) % …"
+            }
         }
+        if kö.aktuell?.mapp == mapp {
+            return kö.andel.map { "\(kö.steg) \(Int($0 * 100)) % …" } ?? "\(kö.steg) …"
+        }
+        if kö.väntande.contains(where: { $0.mapp == mapp }) { return "I kö …" }
         return nil
+    }
+
+    /// Kör arkivpasset igen. Namn som satts för hand lärs först in som
+    /// röstavtryck, så att personerna känns igen när rösterna delas om.
+    private func körOm(_ i: Inspelning, _ mapp: URL, språk: String?) {
+        let placering: Placering = i.projekt.flatMap { namn in
+            arkiv.projekt(för: kund).first { $0.namn == namn }.map { .projekt($0) }
+        } ?? .kund(kund)
+        Task {
+            if !i.röstnamn.isEmpty {
+                _ = await Röstanalys().lärIn(i, mapp: mapp, kund: kund, arkiv: arkiv)
+            }
+            kö.köaOmkörning(i, mapp: mapp, placering: placering, kund: kund, språk: språk)
+        }
     }
 }
 
@@ -890,15 +1000,17 @@ struct Mötesplockare: View {
 
     /// Alla kommande möten som inte redan hör till någon kund.
     private func läsIn() {
+        // En kalenderfråga, inte en per kund.
+        let alla = kalender.möten()
         var tagna = Set<String>()
         for k in arkiv.kunder {
             let kontakter = arkiv.kontakter(för: k)
             let kopplade = arkiv.möteskopplingar(för: k)
-            for m in kalender.möten()
+            for m in alla
             where kopplade[m.id] != nil || Kalendern.hör(m, till: k, kontakter: kontakter) {
                 tagna.insert(m.id)
             }
         }
-        kandidater = kalender.möten().filter { !tagna.contains($0.id) }
+        kandidater = alla.filter { !tagna.contains($0.id) }
     }
 }

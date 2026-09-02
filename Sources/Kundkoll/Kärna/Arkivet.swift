@@ -18,6 +18,10 @@ final class Arkivet: ObservableObject {
     @Published private(set) var sparningar = 0
 
     private let fm = FileManager.default
+    /// Avkodade möte.json, nycklade på ändringstid och storlek.
+    private let cache = Inspelningscache()
+    private var bevakare: Filbevakare?
+    private var omläsning: Task<Void, Never>?
 
     init(rot: URL? = nil) {
         self.rot = rot ?? fm.homeDirectoryForCurrentUser
@@ -25,6 +29,42 @@ final class Arkivet: ObservableObject {
             .appending(path: "Kunder")
         try? fm.createDirectory(at: self.rot, withIntermediateDirectories: true)
         läsOm()
+        // Bara den delade instansen bevakar; proven skapar tillfälliga rötter.
+        if rot == nil { startaBevakning() }
+    }
+
+    // MARK: - Bevakning
+
+    private func startaBevakning() {
+        bevakare = Filbevakare(rot: rot) { [weak self] vägar in
+            Task { @MainActor in self?.filerÄndrades(vägar) }
+        }
+    }
+
+    /// Ändringar utifrån — Finder, Obsidian, en synkad mapp. Egna
+    /// skrivningar kommer inte hit.
+    private func filerÄndrades(_ vägar: [String]) {
+        let intressanta = vägar.filter { v in
+            !v.contains("/.kundkoll/") && !v.contains("/.obsidian/")
+                && !v.hasSuffix(".wav") && !v.hasSuffix(".db")
+                && !v.hasSuffix("-journal") && !v.hasSuffix("-wal") && !v.hasSuffix("-shm")
+                && !v.hasSuffix(".DS_Store")
+        }
+        guard !intressanta.isEmpty else { return }
+        // Något direkt under roten: en kund har kommit eller gått.
+        let rotväg = rot.standardizedFileURL.path
+        if intressanta.contains(where: {
+            URL(fileURLWithPath: $0).deletingLastPathComponent().standardizedFileURL.path == rotväg
+        }) {
+            läsOm()
+        }
+        // Många händelser på en gång ska ge en omläsning, inte tjugo.
+        omläsning?.cancel()
+        omläsning = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(400))
+            guard !Task.isCancelled else { return }
+            self?.sparningar += 1
+        }
     }
 
     // MARK: - Läsa
@@ -35,7 +75,11 @@ final class Arkivet: ObservableObject {
             .sorted { $0.namn.localizedStandardCompare($1.namn) == .orderedAscending }
     }
 
-    func projekt(för kund: Kund) -> [Projekt] {
+    // Läsningarna är rena filsystemsläsningar och får köras utanför
+    // huvudaktören: indexeringen och sökningen bygger på dem, och de låg
+    // tidigare på huvudtråden med hela transkript i JSON.
+
+    nonisolated func projekt(för kund: Kund) -> [Projekt] {
         mappar(i: kund.projektmapp)
             .map { Projekt(namn: $0.lastPathComponent, mapp: $0, kundnamn: kund.namn) }
             .sorted { $0.namn.localizedStandardCompare($1.namn) == .orderedAscending }
@@ -43,16 +87,17 @@ final class Arkivet: ObservableObject {
 
     /// Alla inspelningar för en kund, nyast först. Läser möte.json i varje
     /// inspelningsmapp, både under Samtal/ och under varje projekt.
-    func inspelningar(för kund: Kund) -> [(Inspelning, URL)] {
+    ///
+    /// Avkodningen cachas på ändringstid: en möte.json bär hela transkriptet,
+    /// och en kund med hundratals möten lästes annars om i sin helhet vid
+    /// varje listning.
+    nonisolated func inspelningar(för kund: Kund) -> [(Inspelning, URL)] {
         var rötter = [kund.samtalsmapp]
         rötter += projekt(för: kund).map(\.inspelningsmapp)
         return rötter
             .flatMap { mappar(i: $0) }
             .compactMap { mapp in
-                guard let data = try? Data(contentsOf: mapp.appending(path: "möte.json")),
-                      let i = try? JSONDecoder.kundkoll.decode(Inspelning.self, from: data)
-                else { return nil }
-                return (i, mapp)
+                cache.läs(mapp.appending(path: "möte.json")).map { ($0, mapp) }
             }
             .sorted { $0.0.inledd > $1.0.inledd }
     }
@@ -64,7 +109,7 @@ final class Arkivet: ObservableObject {
     /// osynlig i Finder om den inte visas någonstans. En möte.json som inte
     /// går att avkoda hamnar här av samma skäl: annars försvinner hela
     /// inspelningen utan ett ord.
-    func ofullständiga(för kund: Kund) -> [(mapp: URL, storlek: Int)] {
+    nonisolated func ofullständiga(för kund: Kund) -> [(mapp: URL, storlek: Int)] {
         var rötter = [kund.samtalsmapp]
         rötter += projekt(för: kund).map(\.inspelningsmapp)
         return rötter
@@ -80,14 +125,11 @@ final class Arkivet: ObservableObject {
     }
 
     /// Om mappens möte.json finns och går att läsa.
-    private func läsbar(i mapp: URL) -> Bool {
-        guard let data = try? Data(contentsOf: mapp.appending(path: "möte.json")) else {
-            return false
-        }
-        return (try? JSONDecoder.kundkoll.decode(Inspelning.self, from: data)) != nil
+    nonisolated private func läsbar(i mapp: URL) -> Bool {
+        cache.läs(mapp.appending(path: "möte.json")) != nil
     }
 
-    private func storlek(av mapp: URL) -> Int {
+    nonisolated private func storlek(av mapp: URL) -> Int {
         guard let filer = try? fm.contentsOfDirectory(
             at: mapp, includingPropertiesForKeys: [.fileSizeKey]) else { return 0 }
         return filer.reduce(0) {
@@ -95,7 +137,7 @@ final class Arkivet: ObservableObject {
         }
     }
 
-    private func mappar(i url: URL) -> [URL] {
+    nonisolated private func mappar(i url: URL) -> [URL] {
         guard let innehåll = try? fm.contentsOfDirectory(
             at: url, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles]
         ) else { return [] }
@@ -181,11 +223,11 @@ final class Arkivet: ObservableObject {
 
     // MARK: - Tid
 
-    private func tidsfil(_ kund: Kund) -> URL {
+    nonisolated private func tidsfil(_ kund: Kund) -> URL {
         kund.mapp.appending(path: "tid.json")
     }
 
-    func tidsposter(för kund: Kund) -> [Tidspost] {
+    nonisolated func tidsposter(för kund: Kund) -> [Tidspost] {
         guard let data = try? Data(contentsOf: tidsfil(kund)),
               let t = try? JSONDecoder.kundkoll.decode([Tidspost].self, from: data)
         else { return [] }
@@ -213,9 +255,12 @@ final class Arkivet: ObservableObject {
         ---
         typ: tid
         kund: "\(kund.namn)"
+        genererad: kundkoll
         ---
 
         # Tid · \(kund.namn)
+
+        \(Self.genereradRad)
 
         """
         let perProjekt = Dictionary(grouping: poster) { $0.projekt ?? "" }
@@ -238,11 +283,11 @@ final class Arkivet: ObservableObject {
     /// Matchningen till kund är automatisk — deltagare bland kontakterna,
     /// kundens mejldomän eller kundnamnet i titeln — men projektet inom
     /// kunden kan ingen regel gissa, så det väljs för hand och sparas här.
-    private func möteskopplingsfil(_ kund: Kund) -> URL {
+    nonisolated private func möteskopplingsfil(_ kund: Kund) -> URL {
         kund.mapp.appending(path: ".kundkoll/möteskopplingar.json")
     }
 
-    func möteskopplingar(för kund: Kund) -> [String: String] {
+    nonisolated func möteskopplingar(för kund: Kund) -> [String: String] {
         guard let data = try? Data(contentsOf: möteskopplingsfil(kund)),
               let k = try? JSONDecoder().decode([String: String].self, from: data)
         else { return [:] }
@@ -274,11 +319,11 @@ final class Arkivet: ObservableObject {
 
     // MARK: - Uppgifter
 
-    private func uppgiftsfil(_ kund: Kund) -> URL {
+    nonisolated private func uppgiftsfil(_ kund: Kund) -> URL {
         kund.mapp.appending(path: "uppgifter.json")
     }
 
-    func uppgifter(för kund: Kund) -> [Uppgift] {
+    nonisolated func uppgifter(för kund: Kund) -> [Uppgift] {
         guard let data = try? Data(contentsOf: uppgiftsfil(kund)),
               let u = try? JSONDecoder.kundkoll.decode([Uppgift].self, from: data)
         else { return [] }
@@ -327,11 +372,14 @@ final class Arkivet: ObservableObject {
         ---
         typ: uppgifter
         kund: "\(kund.namn)"
+        genererad: kundkoll
         ---
 
         # Att göra — \(kund.namn)
 
         [[\(kund.namn)]]
+
+        \(Self.genereradRad)
 
         """
         for läge in Uppgift.Läge.allCases {
@@ -351,11 +399,11 @@ final class Arkivet: ObservableObject {
 
     // MARK: - Kopplade mappar
 
-    private func kopplingsfil(_ projekt: Projekt) -> URL {
+    nonisolated private func kopplingsfil(_ projekt: Projekt) -> URL {
         projekt.mapp.appending(path: "kopplade-mappar.json")
     }
 
-    func kopplade(för projekt: Projekt) -> [Kopplad] {
+    nonisolated func kopplade(för projekt: Projekt) -> [Kopplad] {
         guard let data = try? Data(contentsOf: kopplingsfil(projekt)),
               let k = try? JSONDecoder.kundkoll.decode([Kopplad].self, from: data)
         else { return [] }
@@ -387,7 +435,7 @@ final class Arkivet: ObservableObject {
     // MARK: - Anteckningar
 
     /// Anteckningar i en mapp, nyast ändrad först.
-    func anteckningar(i mapp: URL) -> [Anteckning] {
+    nonisolated func anteckningar(i mapp: URL) -> [Anteckning] {
         guard let filer = try? fm.contentsOfDirectory(
             at: mapp, includingPropertiesForKeys: [.contentModificationDateKey],
             options: [.skipsHiddenFiles]) else { return [] }
@@ -424,8 +472,10 @@ final class Arkivet: ObservableObject {
         try anteckning.text.write(to: anteckning.fil, atomically: true, encoding: .utf8)
     }
 
+    /// Papperskorgen, inte radering: en anteckning är text man skrivit
+    /// själv, och inspelningarna går redan den vägen.
     func taBort(_ anteckning: Anteckning) throws {
-        try fm.removeItem(at: anteckning.fil)
+        try fm.trashItem(at: anteckning.fil, resultingItemURL: nil)
     }
 
     /// Byter namn på anteckningen och därmed på filen.
@@ -452,7 +502,7 @@ final class Arkivet: ObservableObject {
 
     // MARK: - Kontakter
 
-    func kontakter(för kund: Kund) -> [Kontakt] {
+    nonisolated func kontakter(för kund: Kund) -> [Kontakt] {
         let url = kund.kontaktmapp.appending(path: "kontakter.json")
         guard let data = try? Data(contentsOf: url),
               let k = try? JSONDecoder.kundkoll.decode([Kontakt].self, from: data)
@@ -489,8 +539,16 @@ final class Arkivet: ObservableObject {
         return alla
     }
 
+    /// Noten och profilbilden följer med till papperskorgen — de blev
+    /// tidigare liggande föräldralösa i mappen.
     func taBort(_ kontakt: Kontakt, hos kund: Kund) throws {
         try sparaKontakter(kontakter(för: kund).filter { $0.id != kontakt.id }, för: kund)
+        let not = kund.kontaktmapp.appending(path: "\(städa(kontakt.namn)).md")
+        if fm.fileExists(atPath: not.path) { try? fm.trashItem(at: not, resultingItemURL: nil) }
+        if let bild = kontakt.bild {
+            let fil = kontaktbildsmapp(kund).appending(path: bild)
+            if fm.fileExists(atPath: fil.path) { try? fm.removeItem(at: fil) }
+        }
     }
 
     /// En not per kontakt, så att Obsidian kan länka till personen från
@@ -686,7 +744,7 @@ final class Arkivet: ObservableObject {
         var färsk: Bool { ålder < 15 * 60 }
     }
 
-    func mailcache(för kund: Kund) -> Mailcache? {
+    nonisolated func mailcache(för kund: Kund) -> Mailcache? {
         let url = kund.mailmapp.appending(path: "mail.json")
         guard let data = try? Data(contentsOf: url) else { return nil }
         return try? JSONDecoder.kundkoll.decode(Mailcache.self, from: data)
@@ -694,8 +752,11 @@ final class Arkivet: ObservableObject {
 
     func sparaMail(_ mejl: [Mailen.Mejl], bilagor: [Bilagor.Bilaga] = [],
                    för kund: Kund) throws {
+        try skrivMailcache(Mailcache(hämtad: Date(), mejl: mejl, bilagor: bilagor), för: kund)
+    }
+
+    private func skrivMailcache(_ cache: Mailcache, för kund: Kund) throws {
         try fm.createDirectory(at: kund.mailmapp, withIntermediateDirectories: true)
-        let cache = Mailcache(hämtad: Date(), mejl: mejl, bilagor: bilagor)
         let data = try JSONEncoder.kundkoll.encode(cache)
         try data.write(to: kund.mailmapp.appending(path: "mail.json"), options: .atomic)
         try skrivMailnot(cache, hos: kund)
@@ -709,11 +770,14 @@ final class Arkivet: ObservableObject {
         typ: mail
         kund: "\(kund.namn)"
         hämtad: \(DateFormatter.iso.string(from: cache.hämtad))
+        genererad: kundkoll
         ---
 
         # Mail — \(kund.namn)
 
         [[\(kund.namn)]]
+
+        \(Self.genereradRad)
 
         """
         if !cache.bilagor.isEmpty {
@@ -805,11 +869,19 @@ final class Arkivet: ObservableObject {
     /// Sparar metadata och det markdown Obsidian ska visa.
     func spara(_ inspelning: Inspelning, i mapp: URL) throws {
         let data = try JSONEncoder.kundkoll.encode(inspelning)
-        try data.write(to: mapp.appending(path: "möte.json"), options: .atomic)
+        let json = mapp.appending(path: "möte.json")
+        try data.write(to: json, options: .atomic)
+        cache.sätt(json, till: inspelning)
         try markdown(för: inspelning, mapp: mapp)
             .write(to: mapp.appending(path: "Transkript.md"), atomically: true, encoding: .utf8)
         sparningar += 1
     }
+
+    /// Raden som säger att filen är skriven av appen. Att göra.md,
+    /// Transkript.md, Mail.md och Tid.md byggs om vid varje sparning, och en
+    /// ändring gjord i Obsidian försvann tidigare utan förvarning.
+    static let genereradRad =
+        "*Skriven av Kundkoll och byggs om vid varje sparning — ändra i appen, inte här.*"
 
     private func markdown(för i: Inspelning, mapp: URL) -> String {
         var ut = """
@@ -820,11 +892,14 @@ final class Arkivet: ObservableObject {
         datum: \(DateFormatter.iso.string(from: i.inledd))
         längd: \(formateraLängd(i.längd))
         kvalitet: \(i.efterbearbetad ? "arkiv (KB-Whisper)" : "live (Apple)")
+        genererad: kundkoll
         ---
 
         # \(i.titel)
 
         [[\(i.kund)]]\(i.projekt.map { " · [[\($0)]]" } ?? "")
+
+        \(Self.genereradRad)
 
         """
         if !i.efterbearbetad {
@@ -861,8 +936,27 @@ final class Arkivet: ObservableObject {
 
     // MARK: - Småsaker
 
+    /// Sökvägar jämförs i en enhetlig form. /var, /tmp och /etc är länkar in
+    /// i /private, och det som listas ur en mapp kommer i den ena skepnaden
+    /// medan det som byggts ur kundmappen kommer i den andra. Länkarna
+    /// tas bort för hand: `resolvingSymlinksInPath` lämnar en väg som inte
+    /// finns orörd, och efter en flytt finns den gamla vägen inte längre.
+    nonisolated static func kanonisk(_ väg: String) -> String {
+        let v = URL(fileURLWithPath: väg).standardizedFileURL.path
+        for p in ["/private/var/", "/private/tmp/", "/private/etc/"] where v.hasPrefix(p) {
+            return String(v.dropFirst("/private".count))
+        }
+        return v
+    }
+
+    /// Om `väg` ligger i eller är `mapp`, oavsett skepnad.
+    nonisolated static func ligger(_ väg: String, i mapp: URL) -> Bool {
+        let v = kanonisk(väg), m = kanonisk(mapp.path)
+        return v == m || v.hasPrefix(m + "/")
+    }
+
     /// Tar bort tecken som inte hör hemma i ett filnamn men behåller å ä ö.
-    private func städa(_ s: String) -> String {
+    nonisolated func städa(_ s: String) -> String {
         let otillåtna = CharacterSet(charactersIn: "/\\:?%*|\"<>")
         return s.components(separatedBy: otillåtna).joined(separator: "-")
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -995,4 +1089,344 @@ extension JSONDecoder {
         }
         return d
     }()
+}
+
+// MARK: - Cache för möte.json
+
+/// Avkodade möte.json, nycklade på sökväg med ändringstid och storlek.
+///
+/// En möte.json bär hela transkriptet, ofta hundratals kilobyte. Utan cache
+/// avkodades varje fil vid varje listning — och ⌘K listade alla kunders
+/// möten på en gång, på huvudtråden. Nyckeln är filens ändringstid och
+/// storlek, så en fil som skrivits om läses om, och en oläslig fil kommer
+/// ihåg att den är det.
+final class Inspelningscache: @unchecked Sendable {
+    private let lås = NSLock()
+    private var poster: [String: (ändrad: Date, storlek: Int, inspelning: Inspelning?)] = [:]
+
+    /// Inspelningen i filen, eller nil om den saknas eller inte går att läsa.
+    func läs(_ json: URL) -> Inspelning? {
+        guard let värden = try? json.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey]),
+              let ändrad = värden.contentModificationDate else { return nil }
+        let storlek = värden.fileSize ?? 0
+        lås.lock()
+        if let p = poster[json.path], p.ändrad == ändrad, p.storlek == storlek {
+            lås.unlock()
+            return p.inspelning
+        }
+        lås.unlock()
+        let i = (try? Data(contentsOf: json))
+            .flatMap { try? JSONDecoder.kundkoll.decode(Inspelning.self, from: $0) }
+        lås.lock()
+        poster[json.path] = (ändrad, storlek, i)
+        lås.unlock()
+        return i
+    }
+
+    /// Fyller på direkt efter en egen skrivning, så att nästa listning
+    /// slipper avkoda det som just skrevs.
+    func sätt(_ json: URL, till inspelning: Inspelning) {
+        guard let värden = try? json.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey]),
+              let ändrad = värden.contentModificationDate else { return }
+        lås.lock()
+        poster[json.path] = (ändrad, värden.fileSize ?? 0, inspelning)
+        lås.unlock()
+    }
+
+    func glöm(_ json: URL) {
+        lås.lock()
+        poster[json.path] = nil
+        lås.unlock()
+    }
+
+    func glömAllt() {
+        lås.lock()
+        poster.removeAll()
+        lås.unlock()
+    }
+}
+
+// MARK: - Byta namn, ta bort, flytta
+
+/// Kunder, projekt och inspelningar nycklas på sina namn på flera ställen:
+/// inspelningens `kund` och `projekt`, uppgifternas källsökvägar, noterna,
+/// mejlstämpeln, uret och Obsidians valvlista. Ett namnbyte i Finder gjorde
+/// tidigare allt det föräldralöst i tysthet. Här görs bytet i appen, och
+/// allt som hänger på namnet skrivs om.
+extension Arkivet {
+
+    /// Byter namn på en kund.
+    @discardableResult
+    func döpOm(kund: Kund, till nyttNamn: String) throws -> Kund {
+        let namn = städa(nyttNamn)
+        guard !namn.isEmpty, namn != kund.namn else { return kund }
+        let nyMapp = rot.appending(path: namn)
+        guard !fm.fileExists(atPath: nyMapp.path) else {
+            throw Enkeltfel("Det finns redan en kund som heter \(namn).")
+        }
+        try fm.moveItem(at: kund.mapp, to: nyMapp)
+        let ny = Kund(namn: namn, mapp: nyMapp)
+        cache.glömAllt()
+
+        // Ingångsnoten heter som kunden.
+        flyttaNot(i: nyMapp, från: kund.namn, till: namn)
+
+        // Inspelningarna bär kundens namn, och deras markdown likaså.
+        for (i, mapp) in inspelningar(för: ny) {
+            var u = i
+            u.kund = namn
+            try? spara(u, i: mapp)
+        }
+        // Uppgifternas källor är sökvägar in i kundmappen.
+        try sparaUppgifter(uppgifter(för: ny).map { u in
+            var u = u
+            u.källa = flyttadVäg(u.källa, från: kund.mapp, till: nyMapp)
+            return u
+        }, för: ny)
+        // Kontaktnoter, mejlnot och tidslogg bär kundens namn i sin text.
+        try? sparaKontakter(kontakter(för: ny), för: ny)
+        if var mail = mailcache(för: ny) {
+            mail.bilagor = mail.bilagor.map { b in
+                var b = b
+                b.fil = flyttadVäg(b.fil, från: kund.mapp, till: nyMapp) ?? b.fil
+                return b
+            }
+            try? skrivMailcache(mail, för: ny)
+        }
+        try? sparaTidsposter(tidsposter(för: ny), för: ny)
+        // Indexet bär gamla sökvägar och byggs om vid nästa tillfälle.
+        glömIndex(hos: ny)
+
+        Uppgiftssamling.flyttaStämpel(från: kund.namn, till: namn)
+        Tidur.delad.byt(kund: kund.namn, till: namn)
+        Obsidian.byt(valv: kund.mapp, till: nyMapp)
+        läsOm()
+        sparningar += 1
+        return ny
+    }
+
+    /// Flyttar kunden med allt innehåll till papperskorgen.
+    func taBort(kund: Kund) throws {
+        try fm.trashItem(at: kund.mapp, resultingItemURL: nil)
+        cache.glömAllt()
+        Uppgiftssamling.glömStämpel(för: kund.namn)
+        Obsidian.avregistrera(valv: kund.mapp)
+        läsOm()
+        sparningar += 1
+    }
+
+    /// Byter namn på ett projekt.
+    @discardableResult
+    func döpOm(projekt: Projekt, hos kund: Kund, till nyttNamn: String) throws -> Projekt {
+        let namn = städa(nyttNamn)
+        guard !namn.isEmpty, namn != projekt.namn else { return projekt }
+        let nyMapp = kund.projektmapp.appending(path: namn)
+        guard !fm.fileExists(atPath: nyMapp.path) else {
+            throw Enkeltfel("Det finns redan ett projekt som heter \(namn).")
+        }
+        try fm.moveItem(at: projekt.mapp, to: nyMapp)
+        let nytt = Projekt(namn: namn, mapp: nyMapp, kundnamn: kund.namn)
+        cache.glömAllt()
+
+        flyttaNot(i: nyMapp, från: projekt.namn, till: namn)
+
+        for (i, mapp) in inspelningar(för: kund)
+        where Self.ligger(mapp.path, i: nyMapp) {
+            var u = i
+            u.projekt = namn
+            try? spara(u, i: mapp)
+        }
+        try sparaUppgifter(uppgifter(för: kund).map { u in
+            var u = u
+            if u.projekt == projekt.namn { u.projekt = namn }
+            u.källa = flyttadVäg(u.källa, från: projekt.mapp, till: nyMapp)
+            return u
+        }, för: kund)
+        try? sparaTidsposter(tidsposter(för: kund).map { t in
+            var t = t
+            if t.projekt == projekt.namn { t.projekt = namn }
+            return t
+        }, för: kund)
+        var kopplingar = möteskopplingar(för: kund)
+        for (id, p) in kopplingar where p == projekt.namn { kopplingar[id] = namn }
+        try? skrivMöteskopplingar(kopplingar, för: kund)
+        for s in allaSamtal(hos: kund) where s.projekt == projekt.namn {
+            var s = s
+            s.projekt = namn
+            try? skriv(samtal: s, för: kund)
+        }
+        // Lägesbilden nycklas på projektets namn.
+        let gammalBild = kund.mapp.appending(path: ".kundkoll/läget-\(projekt.namn.replacingOccurrences(of: "/", with: "-")).json")
+        let nyBild = kund.mapp.appending(path: ".kundkoll/läget-\(namn.replacingOccurrences(of: "/", with: "-")).json")
+        if fm.fileExists(atPath: gammalBild.path) { try? fm.moveItem(at: gammalBild, to: nyBild) }
+        glömIndex(hos: kund)
+
+        Tidur.delad.byt(projekt: projekt.namn, till: namn, hos: kund.namn)
+        sparningar += 1
+        return nytt
+    }
+
+    /// Flyttar projektet med inspelningar och anteckningar till
+    /// papperskorgen. Uppgifterna hör till kunden och blir kvar, utan
+    /// projekt.
+    func taBort(projekt: Projekt, hos kund: Kund) throws {
+        try fm.trashItem(at: projekt.mapp, resultingItemURL: nil)
+        cache.glömAllt()
+        try? sparaUppgifter(uppgifter(för: kund).map { u in
+            var u = u
+            if u.projekt == projekt.namn { u.projekt = nil }
+            return u
+        }, för: kund)
+        try? sparaTidsposter(tidsposter(för: kund).map { t in
+            var t = t
+            if t.projekt == projekt.namn { t.projekt = nil }
+            return t
+        }, för: kund)
+        var kopplingar = möteskopplingar(för: kund)
+        for (id, p) in kopplingar where p == projekt.namn { kopplingar[id] = "" }
+        try? skrivMöteskopplingar(kopplingar, för: kund)
+        let bild = kund.mapp.appending(path: ".kundkoll/läget-\(projekt.namn.replacingOccurrences(of: "/", with: "-")).json")
+        try? fm.removeItem(at: bild)
+        glömIndex(hos: kund)
+        sparningar += 1
+    }
+
+    /// Byter titel på en inspelning. Mappen döps om med titeln, och
+    /// uppgifterna som kom ur mötet följer med.
+    @discardableResult
+    func döpOm(_ inspelning: Inspelning, i mapp: URL, till nyTitel: String,
+               hos kund: Kund) throws -> (Inspelning, URL) {
+        let titel = nyTitel.trimmingCharacters(in: .whitespaces)
+        guard !titel.isEmpty, titel != inspelning.titel else { return (inspelning, mapp) }
+        let stämpel = DateFormatter.mappnamn.string(from: inspelning.inledd)
+        let rot = mapp.deletingLastPathComponent()
+        var nyMapp = rot.appending(path: "\(stämpel) \(städa(titel))")
+        var n = 2
+        while fm.fileExists(atPath: nyMapp.path) && nyMapp != mapp {
+            nyMapp = rot.appending(path: "\(stämpel) \(städa(titel)) \(n)")
+            n += 1
+        }
+        if nyMapp != mapp { try fm.moveItem(at: mapp, to: nyMapp) }
+        cache.glöm(mapp.appending(path: "möte.json"))
+        var ny = inspelning
+        ny.titel = titel
+        try spara(ny, i: nyMapp)
+
+        var ändrat = false
+        let uppdaterade = uppgifter(för: kund).map { u -> Uppgift in
+            guard Uppgiftssamling.hör(u, till: mapp, titel: inspelning.titel) else { return u }
+            var u = u
+            u.källa = nyMapp.path
+            u.källtitel = titel
+            ändrat = true
+            return u
+        }
+        if ändrat { try sparaUppgifter(uppdaterade, för: kund) }
+        glömIndex(hos: kund)
+        return (ny, nyMapp)
+    }
+
+    /// Flyttar en inspelning till kundnivån eller ett projekt, hos samma
+    /// eller en annan kund. Uppgifterna som kom ur mötet och mötets chattar
+    /// följer med.
+    @discardableResult
+    func flytta(_ inspelning: Inspelning, från mapp: URL, till placering: Placering,
+                hos kund: Kund) throws -> (Inspelning, URL) {
+        let målrot = placering.inspelningsrot
+        try fm.createDirectory(at: målrot, withIntermediateDirectories: true)
+        var nyMapp = målrot.appending(path: mapp.lastPathComponent)
+        guard nyMapp != mapp else { return (inspelning, mapp) }
+        var n = 2
+        while fm.fileExists(atPath: nyMapp.path) {
+            nyMapp = målrot.appending(path: "\(mapp.lastPathComponent) \(n)")
+            n += 1
+        }
+        try fm.moveItem(at: mapp, to: nyMapp)
+        cache.glöm(mapp.appending(path: "möte.json"))
+
+        var ny = inspelning
+        ny.kund = placering.kundnamn
+        ny.projekt = { if case .projekt(let p) = placering { p.namn } else { nil } }()
+        try spara(ny, i: nyMapp)
+
+        guard let målkund = kunder.first(where: { $0.namn == placering.kundnamn }) else {
+            return (ny, nyMapp)
+        }
+        // Uppgifterna som kom ur mötet.
+        let alla = uppgifter(för: kund)
+        var flyttade: [Uppgift] = []
+        var kvar: [Uppgift] = []
+        for u in alla {
+            if Uppgiftssamling.hör(u, till: mapp, titel: inspelning.titel) {
+                var u = u
+                u.källa = nyMapp.path
+                u.projekt = ny.projekt
+                flyttade.append(u)
+            } else {
+                kvar.append(u)
+            }
+        }
+        if !flyttade.isEmpty {
+            if målkund == kund {
+                try sparaUppgifter(kvar + flyttade, för: kund)
+            } else {
+                try sparaUppgifter(kvar, för: kund)
+                try sparaUppgifter(uppgifter(för: målkund) + flyttade, för: målkund)
+            }
+        }
+        // Mötets chattar hör till mötet, inte till kunden.
+        if målkund != kund {
+            for s in allaSamtal(hos: kund) where s.möte == inspelning.id.uuidString {
+                try? skriv(samtal: s, för: målkund)
+                try? taBort(s, för: kund)
+            }
+            glömIndex(hos: målkund)
+        }
+        glömIndex(hos: kund)
+        return (ny, nyMapp)
+    }
+
+    // MARK: Småsaker
+
+    /// Ingångsnoten «Kund.md» eller «Projekt.md» följer med namnet.
+    private func flyttaNot(i mapp: URL, från gammalt: String, till nytt: String) {
+        let gammal = mapp.appending(path: "\(gammalt).md")
+        let ny = mapp.appending(path: "\(nytt).md")
+        guard fm.fileExists(atPath: gammal.path), !fm.fileExists(atPath: ny.path) else { return }
+        try? fm.moveItem(at: gammal, to: ny)
+    }
+
+    /// Byter ut sökvägens början när en mapp flyttat.
+    private func flyttadVäg(_ väg: String?, från gammal: URL, till ny: URL) -> String? {
+        guard let väg else { return nil }
+        let v = Self.kanonisk(väg), g = Self.kanonisk(gammal.path)
+        guard v == g || v.hasPrefix(g + "/") else { return väg }
+        return Self.kanonisk(ny.path) + v.dropFirst(g.count)
+    }
+
+    /// Indexet är härlett och bär sökvägar; efter en flytt byggs det om.
+    private func glömIndex(hos kund: Kund) {
+        let mapp = kund.mapp.appending(path: ".kundkoll")
+        for namn in ["index.db", "index.db-journal", "index.db-wal", "index.db-shm"] {
+            try? fm.removeItem(at: mapp.appending(path: namn))
+        }
+    }
+
+    /// Alla samtal hos kunden, oavsett projekt och möte.
+    private func allaSamtal(hos kund: Kund) -> [Samtal] {
+        let mapp = kund.mapp.appending(path: ".kundkoll/samtal")
+        guard let filer = try? fm.contentsOfDirectory(
+            at: mapp, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]) else { return [] }
+        return filer.filter { $0.pathExtension == "json" }.compactMap { url in
+            (try? Data(contentsOf: url)).flatMap { try? JSONDecoder.kundkoll.decode(Samtal.self, from: $0) }
+        }
+    }
+
+    /// Skriver ett samtal utan att röra dess tid — en flytt är ingen ändring.
+    private func skriv(samtal: Samtal, för kund: Kund) throws {
+        let mapp = kund.mapp.appending(path: ".kundkoll/samtal")
+        try fm.createDirectory(at: mapp, withIntermediateDirectories: true)
+        let data = try JSONEncoder.kundkoll.encode(samtal)
+        try data.write(to: mapp.appending(path: "\(samtal.id.uuidString).json"), options: .atomic)
+    }
 }

@@ -159,4 +159,34 @@ enum Inställningar {
         get { UserDefaults.standard.bool(forKey: "kundkoll.delaRöstprofiler") }
         set { UserDefaults.standard.set(newValue, forKey: "kundkoll.delaRöstprofiler") }
     }
+
+    /// Om modellen får skriva sammanfattningar, leta uppgifter i mejl och
+    /// skriva lägesbilder utan att någon bett om det.
+    ///
+    /// Med en molnmodell vald betyder det att hela transkript och mejl
+    /// lämnar datorn i bakgrunden. Det står i inställningarna i klartext,
+    /// och det går att stänga av: då skrivs sammanfattningen först när man
+    /// trycker på knappen i mötesvyn.
+    static var automatiskaModellanrop: Bool {
+        get { UserDefaults.standard.object(forKey: "kundkoll.automatiskaModellanrop") as? Bool ?? true }
+        set { UserDefaults.standard.set(newValue, forKey: "kundkoll.automatiskaModellanrop") }
+    }
+
+    /// Var whisper.cpp ligger. Tomt betyder ~/Projekt/whisper.cpp.
+    static var whisperRot: String? {
+        get { tom(UserDefaults.standard.string(forKey: "kundkoll.whisperRot")) }
+        set { UserDefaults.standard.set(tom(newValue), forKey: "kundkoll.whisperRot") }
+    }
+
+    /// Pythonmiljön med torch, speechbrain och mlx-whisper. Tomt betyder
+    /// ~/Projekt/transcriber/venv.
+    static var pythonMiljö: String? {
+        get { tom(UserDefaults.standard.string(forKey: "kundkoll.pythonMiljö")) }
+        set { UserDefaults.standard.set(tom(newValue), forKey: "kundkoll.pythonMiljö") }
+    }
+
+    private static func tom(_ s: String?) -> String? {
+        let t = s?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return t.isEmpty ? nil : t
+    }
 }

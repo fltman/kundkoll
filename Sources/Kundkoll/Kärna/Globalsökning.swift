@@ -5,7 +5,6 @@ import Foundation
 /// Kunskapsbanken finns per kund, men man vet inte alltid vilken kund något
 /// sades hos — det är ofta därför man söker. Varje kunds index frågas var för
 /// sig och träffarna vägs ihop.
-@MainActor
 enum Globalsökning {
 
     struct Träff: Identifiable {

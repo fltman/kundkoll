@@ -75,9 +75,15 @@ final class Liveinsikter: ObservableObject {
             Task { @MainActor in self?.pröva() }
         }
 
+        // Indexet byggs i bakgrunden: mötet har just börjat, och huvudtråden
+        // ska rita livetranskriptet, inte läsa gamla möten.
+        let arkiv = Arkivet.shared
+        Task.detached(priority: .utility) { [weak self] in
+            guard let b = try? Kunskapsbank(kund: kund) else { return }
+            _ = try? Indexering.kör(för: kund, bank: b, arkiv: arkiv)
+            await MainActor.run { self?.bank = b }
+        }
         Task {
-            bank = try? Kunskapsbank(kund: kund)
-            if let bank { _ = try? Indexering.kör(för: kund, bank: bank) }
             if await !insiktsmodell.tillgänglig {
                 varning = "Når ingen lokal modell. Starta Ollama för att få insikter under samtalet."
             }

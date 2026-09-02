@@ -116,19 +116,13 @@ actor Röstanalys {
         let p = Process()
         p.executableURL = sökvägar.python
         p.arguments = [sökvägar.skript.path]
-        let in_ = Pipe(), ut = Pipe()
-        p.standardInput = in_
-        p.standardOutput = ut
-        p.standardError = FileHandle.nullDevice
-        try p.run()
-        in_.fileHandleForWriting.write(indata)
-        try? in_.fileHandleForWriting.close()
+        // Felutskriften följer med: en trasig venv eller en saknad modell
+        // förklarade sig tidigare i /dev/null.
+        let utfall = try await Underprocess.kör(p, indata: indata, tidsgräns: 30 * 60)
 
-        let utdata = ut.fileHandleForReading.readDataToEndOfFile()
-        p.waitUntilExit()
-
-        guard let svar = try? JSONDecoder().decode(Svar.self, from: utdata) else {
-            throw Fel.otolkbartSvar
+        guard let svar = try? JSONDecoder().decode(Svar.self, from: utfall.ut) else {
+            let orsak = utfall.felsvans()
+            throw orsak.isEmpty ? Fel.otolkbartSvar : Fel.frånPython(orsak)
         }
         if let fel = svar.fel { throw Fel.frånPython(fel) }
         return svar
@@ -533,6 +527,12 @@ extension Röstanalys {
         var namn: [Int: String]
         /// Vilken väg som användes, för att kunna säga det i gränssnittet.
         var metod: String
+        /// Det som gick snett på vägen men inte stoppade uppdelningen: att
+        /// avtrycken inte gick att läsa, eller att pyannote föll och
+        /// klustringen fick ta över. Tidigare försvann det i tysthet, och
+        /// en trasig Pythonmiljö gav namnlösa röster i varje möte utan att
+        /// någon sa varför.
+        var varning: String?
     }
 
     /// Delar upp motpartsspåret i röster och sätter namn på dem som känns igen.
@@ -557,7 +557,15 @@ extension Röstanalys {
         // Avtrycken behövs oavsett väg: de är det som känner igen personen
         // i nästa samtal.
         vidLäge?("Läser röstavtryck")
-        let par = (try? await avtryck(fil: fil, turer: turer)) ?? []
+        var varningar: [String] = []
+        let par: [(Tur, Avtryck)]
+        do {
+            par = try await avtryck(fil: fil, turer: turer)
+        } catch {
+            par = []
+            varningar.append("Röstavtrycken gick inte att läsa, så ingen känns igen: "
+                             + error.localizedDescription)
+        }
         var avtryckPerTur: [Tur: Avtryck] = [:]
         for (t, a) in par { avtryckPerTur[t] = a }
 
@@ -570,9 +578,14 @@ extension Röstanalys {
             metod = "pyannote"
             if grupper.isEmpty { throw Fel.otolkbartSvar }
         } catch {
-            // pyannote saknas eller föll — klustringen duger som reserv.
+            // pyannote saknas eller föll — klustringen duger som reserv, men
+            // den är uppmätt sämre och det ska synas.
             grupper = Self.gruppera(par, väntade: antal)
             metod = "klustring"
+            varningar.append(par.isEmpty
+                ? "Rösterna kunde inte delas upp: \(error.localizedDescription)"
+                : "pyannote kunde inte köras (\(error.localizedDescription)), "
+                  + "så rösterna delades med reservmetoden, som är sämre.")
         }
 
         grupper = Self.namnge(grupper, mot: profiler)
@@ -589,6 +602,36 @@ extension Röstanalys {
             }
         }
         return Uppdelning(yttranden: (mina + märkta).sorted { $0.start < $1.start },
-                          namn: namn, metod: metod)
+                          namn: namn, metod: metod,
+                          varning: varningar.isEmpty ? nil : varningar.joined(separator: " "))
+    }
+
+    /// Lär in avtryck för de röster som har namn, så att personerna känns
+    /// igen nästa gång — och efter en omkörning av samma möte.
+    ///
+    /// Bara grupper med tillräckligt mycket tal: en kort replik ger ett
+    /// avtryck som mest är brus. Ger namnen som inte gick att lära in.
+    func lärIn(_ inspelning: Inspelning, mapp: URL, kund: Kund,
+               arkiv: Arkivet) async -> [String] {
+        let fil = mapp.appending(path: "motpart.wav")
+        guard FileManager.default.fileExists(atPath: fil.path) else {
+            return Array(Set(inspelning.röstnamn.values))
+        }
+        var misslyckade: [String] = []
+        for (grupp, personnamn) in inspelning.röstnamn {
+            let rader = inspelning.yttranden.filter { $0.röstgrupp == grupp }
+            let turer = Self.turer(av: rader)
+            guard let par = try? await avtryck(fil: fil, turer: turer),
+                  let bästa = par.map(\.1).max(by: { $0.sekunder < $1.sekunder }),
+                  bästa.sekunder >= Tröskel.minstaProfilLängd else {
+                misslyckade.append(personnamn)
+                continue
+            }
+            let lyckades = await MainActor.run {
+                (try? arkiv.lärDigRöst(namn: personnamn, avtryck: bästa, hos: kund)) != nil
+            }
+            if !lyckades { misslyckade.append(personnamn) }
+        }
+        return misslyckade
     }
 }

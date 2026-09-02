@@ -39,20 +39,27 @@ final class Inspelningssession: ObservableObject {
     /// kan visa var arbetet står.
     @Published private(set) var bearbetadMapp: URL?
     @Published private(set) var röstnamn: [Int: String] = [:]
+    /// Varför efterbearbetningen föll senast. Tidigare försvann det i
+    /// tysthet, och mötet stod som «live» för alltid.
+    @Published private(set) var efterbearbetningsfel: String?
+    /// Sätts när livetranskriberingen slutat svara mitt i ett möte — annars
+    /// ser en död whisper-server ut precis som tystnad.
+    @Published private(set) var livevarning: String?
 
     /// Lyssnar efter frågeställningar medan samtalet pågår.
     let liveinsikter = Liveinsikter()
 
     private let infångning = Ljudinfångning()
     private let whisper = Whisper.delad
-    private let röstanalys = Röstanalys()
     private var buffring: [Röst: Ljudbuffring] = [.jag: Ljudbuffring(), .motpart: Ljudbuffring()]
     private var skrivare: [Röst: Spårskrivare] = [:]
 
     private var mapp: URL?
     /// Vad inspelningen heter, synligt för raden i huvudfönstret.
     @Published private(set) var titel = ""
-    private var placering: Placering?
+    /// Var inspelningen hamnar. Läsbar utifrån så att fönstret kan öppnas
+    /// igen om det stängts medan inspelningen fortsatte.
+    private(set) var placering: Placering?
     private var mikrofonNamn: String?
     private var kallade: [String] = []
     /// Mötets språk: "sv" eller "en". Livefönstren och arkivpasset följer det.
@@ -69,7 +76,13 @@ final class Inspelningssession: ObservableObject {
     func starta(placering: Placering, titel: String,
                 mikrofon: Ljudinfångning.Mikrofon?, kallade: [String] = [],
                 språk: String = "sv") async {
-        guard case .vilande = läge else { return }
+        // Efter ett fel, eller ett färdigt möte som lämnats kvar, ska nästa
+        // «Spela in» fungera — tidigare krävdes en omstart av appen.
+        switch läge {
+        case .vilande, .fel, .klar: break
+        default: return
+        }
+        livevarning = nil
         self.placering = placering
         self.titel = titel.isEmpty ? "Samtal" : titel
         self.mikrofonNamn = mikrofon?.namn
@@ -144,14 +157,24 @@ final class Inspelningssession: ObservableObject {
         köer[röst] = Task { [weak self] in
             await tidigare?.value
             guard let self else { return }
-            guard let text = try? await self.whisper.transkribera(prov: f.prov, språk: self.språk),
-                  !text.isEmpty else { return }
-            await MainActor.run {
-                let y = Yttrande(röst: röst, text: text, start: f.start, slut: f.slut)
-                self.yttranden.append(y)
-                self.yttranden.sort { $0.start < $1.start }
-                self.liveinsikter.tog(y)
+            let text: String
+            do {
+                text = try await self.whisper.transkribera(prov: f.prov, språk: self.språk)
+            } catch {
+                // Servern kan ha dött mitt i mötet. Utan det här försvann
+                // varje fönster i tysthet och livepanelen bara tystnade.
+                // Säg det, och försök väcka den — startaServer märker att
+                // processen är borta och startar om.
+                self.livevarning = "Livetranskriberingen svarar inte: \(error.localizedDescription)"
+                try? await self.whisper.startaServer()
+                return
             }
+            if self.livevarning != nil { self.livevarning = nil }
+            guard !text.isEmpty else { return }
+            let y = Yttrande(röst: röst, text: text, start: f.start, slut: f.slut)
+            self.yttranden.append(y)
+            self.yttranden.sort { $0.start < $1.start }
+            self.liveinsikter.tog(y)
         }
     }
 
@@ -183,7 +206,7 @@ final class Inspelningssession: ObservableObject {
         await whisper.stoppaServer()
 
         guard let mapp, let placering else { läge = .vilande; return nil }
-        var inspelning = Inspelning(
+        let inspelning = Inspelning(
             titel: titel,
             inledd: start,
             längd: slut,
@@ -195,108 +218,87 @@ final class Inspelningssession: ObservableObject {
             kallade: kallade,
             språk: språk
         )
-        try? Arkivet.shared.spara(inspelning, i: mapp)
+        do {
+            try Arkivet.shared.spara(inspelning, i: mapp)
+        } catch {
+            // «Sparad» får inte visas när det inte stämmer. Ljudet ligger
+            // kvar, och mappen syns under Påbörjade inspelningar.
+            läge = .fel("Inspelningen kunde inte sparas: \(error.localizedDescription) "
+                        + "Ljudet ligger kvar i «\(mapp.lastPathComponent)» och syns under "
+                        + "Påbörjade inspelningar hos kunden.")
+            return mapp
+        }
         läge = .klar(mapp)
 
         // Den stora modellen får gå i bakgrunden; live-transkriptet finns redan sparat.
-        efterbearbeta(&inspelning, mapp: mapp)
+        efterbearbeta(inspelning, mapp: mapp)
         return mapp
     }
 
-    /// Kör KB-Whisper medium på båda spåren, delar upp motparten i röster och
-    /// ersätter live-raderna. Går i bakgrunden; live-transkriptet är redan sparat.
-    private func efterbearbeta(_ inspelning: inout Inspelning, mapp: URL) {
-        let i = inspelning
-        let kund = Arkivet.shared.kunder.first { $0.namn == i.kund }
+    /// Arkivpasset i bakgrunden: den stora modellen på båda spåren, röster
+    /// och sammanfattning. Själva arbetet bor i `Efterbearbetning`; här
+    /// speglas det till raden i huvudfönstret, och ett fel sägs i klartext
+    /// i stället för att lämna mötet som «live» för alltid.
+    private func efterbearbeta(_ inspelning: Inspelning, mapp: URL) {
+        let kund = Arkivet.shared.kunder.first { $0.namn == inspelning.kund }
+        let profiler = kund.map { Arkivet.shared.röstprofiler(för: $0) } ?? []
         efterbearbetar = true
+        efterbearbetningsfel = nil
+        efterbearbetningsandel = 0
+        senasteArkivrad = ""
         bearbetadMapp = mapp
         Task { [weak self] in
             guard let self else { return }
-            var rader: [Yttrande] = []
-            let spår = [(Röst.jag, "jag.wav"), (Röst.motpart, "motpart.wav")]
-            for (n, (röst, fil)) in spår.enumerated() {
-                let url = mapp.appending(path: fil)
-                guard FileManager.default.fileExists(atPath: url.path) else { continue }
-                // Två spår, så varje spår är halva arbetet.
-                let bas = Double(n) / Double(spår.count)
-                if let r = try? await Arkivtranskribering.kör(
-                    fil: url, röst: röst, språk: i.språk ?? "sv", totalLängd: i.längd,
-                    vidFramsteg: { f in
-                        Task { @MainActor in
-                            self.efterbearbetningsandel = bas + f.andel / Double(spår.count)
-                            if !f.senasteRad.isEmpty { self.senasteArkivrad = f.senasteRad }
-                        }
-                    }) {
-                    rader += r
+            do {
+                let klar = try await Efterbearbetning.kör(
+                    inspelning, mapp: mapp, profiler: profiler, språk: inspelning.språk,
+                    vidLäge: { l in Task { @MainActor in self.visa(l) } })
+                // Bara om ingen ny inspelning hunnit börja: annars skulle det
+                // förra mötets rader skriva över det nya livetranskriptet.
+                if !self.pågår {
+                    self.yttranden = klar.yttranden
+                    self.röstnamn = klar.röstnamn
                 }
+                Notiser.mötetKlart(klar, mapp: mapp)
+            } catch {
+                self.efterbearbetningsfel = error.localizedDescription
+                Notiser.bearbetningFöll(inspelning, fel: error.localizedDescription)
             }
-            guard !rader.isEmpty else {
-                await MainActor.run {
-                    self.efterbearbetar = false
-                    self.bearbetadMapp = nil
-                }
-                return
-            }
-            rader.sort { $0.start < $1.start }
-
-            var uppdaterad = i
-            uppdaterad.arkivYttranden = rader
-            await MainActor.run {
-                try? Arkivet.shared.spara(uppdaterad, i: mapp)
-                self.yttranden = rader
-                self.analyserarRöster = true
-            }
-
-            let (märkta, namn) = await self.delaUppRöster(
-                rader, motpartsfil: mapp.appending(path: "motpart.wav"), kund: kund)
-            uppdaterad.arkivYttranden = märkta
-            uppdaterad.röstnamn = namn
-            await MainActor.run {
-                try? Arkivet.shared.spara(uppdaterad, i: mapp)
-                self.yttranden = märkta
-                self.röstnamn = namn
-                self.analyserarRöster = false
-                self.sammanfattar = true
-            }
-
-            // Det man vill ha ur ett möte är sällan transkriptet utan vad det
-            // landade i. Sammanfattningen skrivs sist, när talarna är kända.
-            if let s = try? await Sammanfattare().skriv(för: uppdaterad, kund: uppdaterad.kund) {
-                uppdaterad.sammanfattning = s
-                let inspelning = uppdaterad
-                await MainActor.run {
-                    try? Arkivet.shared.spara(inspelning, i: mapp)
-                    // Mötets åtaganden hamnar på tavlan. De är redan
-                    // utplockade av sammanfattningen, så ingen extra runda
-                    // behövs här.
-                    Uppgiftssamling.frånMöte(s, inspelning: inspelning, mapp: mapp)
-                }
-            }
-            await MainActor.run {
-                self.sammanfattar = false
-                self.efterbearbetar = false
-                self.bearbetadMapp = nil
-                Notiser.mötetKlart(uppdaterad)
-            }
+            self.efterbearbetar = false
+            self.analyserarRöster = false
+            self.sammanfattar = false
+            self.bearbetadMapp = nil
         }
     }
 
-    /// Delar motpartsspåret i röster och sätter namn på dem som känns igen.
-    private func delaUppRöster(_ rader: [Yttrande],
-                               motpartsfil: URL,
-                               kund: Kund?) async -> ([Yttrande], [Int: String]) {
-        let profiler = kund.map { k in
-            MainActor.assumeIsolated { Arkivet.shared.röstprofiler(för: k) }
-        } ?? []
-        // Kalendern vet ofta hur många som talar: de kallade minus jag själv.
-        let uppdelning = await röstanalys.delaUpp(
-            fil: motpartsfil, yttranden: rader,
-            antal: kallade.isEmpty ? nil : kallade.count,
-            profiler: profiler)
-        return (uppdelning.yttranden, uppdelning.namn)
+    /// Speglar passets läge till det raden och fönstret visar.
+    private func visa(_ l: Efterbearbetning.Läge) {
+        switch l.fas {
+        case .transkriberar:
+            analyserarRöster = false
+            sammanfattar = false
+            if let a = l.andel { efterbearbetningsandel = a }
+            if let s = l.senaste, !s.isEmpty { senasteArkivrad = s }
+        case .röster:
+            analyserarRöster = true
+            sammanfattar = false
+        case .sammanfattar:
+            analyserarRöster = false
+            sammanfattar = true
+        }
     }
 
     func återställ() { if case .spelarIn = läge {} else { läge = .vilande; yttranden = [] } }
+
+    /// Nollställer bara om sessionen står i ett slutläge. Anropas när
+    /// inspelningsfönstret stängs: ett fel eller ett färdigt möte som
+    /// lämnas kvar skulle annars låsa nästa «Spela in».
+    func återställOmKlar() {
+        switch läge {
+        case .klar, .fel: återställ()
+        default: break
+        }
+    }
 
     private func städa() async {
         klocka?.invalidate(); klocka = nil
@@ -313,6 +315,13 @@ final class Spårskrivare {
     private let handtag: FileHandle
     private let url: URL
     private var antalProv = 0
+    /// Prov sedan huvudet senast skrevs om.
+    private var sedanHuvud = 0
+    /// Huvudet skrivs om var femte sekund ljud. Kraschar appen mitt i ett
+    /// möte, eller stängs den med ⌘Q, är filen ändå läsbar fram till dit.
+    /// Tidigare stod längden noll tills stäng() hann köra, och en timmes
+    /// ljud såg ut som en tom fil för whisper och spelaren.
+    private static let huvudintervall = Int(Ljudbuffring.målfrekvens) * 5
 
     init(fil: URL) throws {
         FileManager.default.createFile(atPath: fil.path, contents: Wav.data(av: []))
@@ -329,14 +338,23 @@ final class Spårskrivare {
         }
         handtag.write(d)
         antalProv += prov.count
+        sedanHuvud += prov.count
+        if sedanHuvud >= Self.huvudintervall {
+            skrivHuvud()
+            sedanHuvud = 0
+        }
     }
 
     /// WAV-huvudet innehåller längder som inte är kända förrän i slutet.
     func stäng() {
+        skrivHuvud()
+        try? handtag.close()
+    }
+
+    private func skrivHuvud() {
         let dataBytes = UInt32(antalProv * 2)
         skrivUInt32(dataBytes + 36, vid: 4)      // RIFF-chunkens längd
         skrivUInt32(dataBytes, vid: 40)          // data-chunkens längd
-        try? handtag.close()
     }
 
     private func skrivUInt32(_ v: UInt32, vid offset: UInt64) {

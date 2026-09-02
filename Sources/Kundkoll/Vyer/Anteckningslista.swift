@@ -11,6 +11,7 @@ struct Anteckningslista: View {
     @State private var öppen: Anteckning?
     @State private var nyRubrik = ""
     @State private var visaNy = false
+    @State private var attTaBort: Anteckning?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -34,9 +35,8 @@ struct Anteckningslista: View {
                                 Button("Visa i Finder") {
                                     NSWorkspace.shared.activateFileViewerSelecting([a.fil])
                                 }
-                                Button("Ta bort", role: .destructive) {
-                                    try? arkiv.taBort(a)
-                                    läsOm()
+                                Button("Flytta till papperskorgen …", role: .destructive) {
+                                    attTaBort = a
                                 }
                             }
                         if i < anteckningar.count - 1 { Divider() }
@@ -49,6 +49,20 @@ struct Anteckningslista: View {
             Anteckningsvy(anteckning: a, mapp: mapp, vidÄndring: läsOm)
         }
         .sheet(isPresented: $visaNy) { nyttBlad }
+        .confirmationDialog(
+            "Flytta anteckningen till papperskorgen?",
+            isPresented: Binding(get: { attTaBort != nil }, set: { if !$0 { attTaBort = nil } }),
+            presenting: attTaBort
+        ) { a in
+            Button("Flytta till papperskorgen", role: .destructive) {
+                try? arkiv.taBort(a)
+                attTaBort = nil
+                läsOm()
+            }
+            Button("Avbryt", role: .cancel) { attTaBort = nil }
+        } message: { a in
+            Text("«\(a.titel)» flyttas till papperskorgen. Du kan ta tillbaka den därifrån.")
+        }
         .onAppear(perform: läsOm)
     }
 

@@ -152,11 +152,12 @@ final class Kalendern: ObservableObject {
             guard let e = d.epost?.lowercased() else { continue }
             if adresser.contains(e) { return true }
         }
-        if !domäner(hos: kontakter).isEmpty {
+        let kundensDomäner = domäner(hos: kontakter)
+        if !kundensDomäner.isEmpty {
             for d in möte.deltagare where !d.ärJag {
                 guard let e = d.epost?.lowercased(),
                       let domän = e.split(separator: "@").last.map(String.init) else { continue }
-                if domäner(hos: kontakter).contains(domän) { return true }
+                if kundensDomäner.contains(domän) { return true }
             }
         }
         let titel = möte.titel.lowercased()

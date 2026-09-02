@@ -17,6 +17,7 @@ struct Kanbanvy: View {
     /// Spalten kortet just nu hålls över, för att visa var det landar.
     @State private var mål: Uppgift.Läge?
     @State private var redigerad: Uppgift?
+    @State private var attTaBort: Uppgift?
 
     private var synliga: [Uppgift] {
         guard let projekt else { return uppgifter }
@@ -57,12 +58,26 @@ struct Kanbanvy: View {
                                projekt: projekt == nil ? arkiv.projekt(för: kund) : [],
                                vidSparat: läsOm)
         }
+        .confirmationDialog(
+            "Ta bort uppgiften?",
+            isPresented: Binding(get: { attTaBort != nil }, set: { if !$0 { attTaBort = nil } }),
+            presenting: attTaBort
+        ) { u in
+            Button("Ta bort", role: .destructive) {
+                try? arkiv.taBort(u, för: kund)
+                attTaBort = nil
+                läsOm()
+            }
+            Button("Avbryt", role: .cancel) { attTaBort = nil }
+        } message: { u in
+            Text("«\(u.vad)» tas bort från tavlan. Det går inte att ångra.")
+        }
     }
 
     private func spalt(_ läge: Uppgift.Läge) -> some View {
         let ivarje = synliga.filter { $0.läge == läge }
             .sorted { $0.skapad > $1.skapad }
-        return VStack(alignment: .leading, spacing: 8) {
+        return LazyVStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
                 Text(läge.namn).font(.subheadline.weight(.semibold))
                 Text("\(ivarje.count)")
@@ -143,10 +158,7 @@ struct Kanbanvy: View {
                 }
             }
             Divider()
-            Button("Ta bort", role: .destructive) {
-                try? arkiv.taBort(u, för: kund)
-                läsOm()
-            }
+            Button("Ta bort …", role: .destructive) { attTaBort = u }
         }
     }
 

@@ -47,10 +47,17 @@ struct Röstvy: View {
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Vem är vem?").font(.headline)
-                        Text("\(grupper.count) röster på motpartsspåret")
+                        Text("\(grupper.count) röster på motpartsspåret"
+                             + (inspelning.röstmetod.map { " · delade med \($0)" } ?? ""))
                             .font(.caption).foregroundStyle(.secondary)
                     }
                     Spacer()
+                }
+                if let varning = inspelning.röstvarning {
+                    Label(varning, systemImage: "exclamationmark.triangle")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
                 // Uppdelningen är en gissning ur ljudet. Den som var med i
                 // samtalet vet hur många som talade, och det är den snabbaste
@@ -164,21 +171,19 @@ struct Röstvy: View {
         try? arkiv.spara(inspelning, i: mapp)
 
         // Lär in avtrycken för de röster som fått namn, så att personen känns
-        // igen i nästa samtal. Bara grupper med tillräckligt mycket tal —
-        // en kort replik ger ett avtryck som mest är brus.
+        // igen i nästa samtal. Bladet stängs direkt, så det som inte gick
+        // sägs i en notis — tidigare försvann det i tysthet, och personen
+        // kändes aldrig igen igen utan att man förstod varför.
+        let sparad = inspelning
         Task {
-            let fil = mapp.appending(path: "motpart.wav")
-            guard FileManager.default.fileExists(atPath: fil.path) else { return }
-            let analys = Röstanalys()
-            for (grupp, personnamn) in inspelning.röstnamn {
-                let rader = inspelning.yttranden.filter { $0.röstgrupp == grupp }
-                let turer = Röstanalys.turer(av: rader)
-                guard let par = try? await analys.avtryck(fil: fil, turer: turer),
-                      let bästa = par.map(\.1).max(by: { $0.sekunder < $1.sekunder }),
-                      bästa.sekunder >= Tröskel.minstaProfilLängd else { continue }
-                await MainActor.run {
-                    try? arkiv.lärDigRöst(namn: personnamn, avtryck: bästa, hos: kund)
-                }
+            let misslyckade = await Röstanalys().lärIn(sparad, mapp: mapp, kund: kund, arkiv: arkiv)
+            if !misslyckade.isEmpty {
+                Notiser.skicka(
+                    titel: "Röstavtryck",
+                    text: "Kunde inte lära in \(misslyckade.joined(separator: ", ")): för lite "
+                        + "tal, eller så gick avtrycken inte att läsa. Namnet gäller ändå för "
+                        + "det här mötet.",
+                    kund: kund.namn)
             }
         }
         // En person man satt namn på hör till kunden. Att behöva lägga upp

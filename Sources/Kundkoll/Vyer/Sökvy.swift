@@ -125,11 +125,23 @@ struct Sökvy: View {
         }
     }
 
+    @State private var sökjobb: Task<Void, Never>?
+
+    /// Sökningen öppnar ett index per kund; det görs i bakgrunden så att
+    /// skrivandet i rutan inte hackar.
     private func sök() {
         let text = fråga.trimmingCharacters(in: .whitespaces)
         guard text.count >= 2 else { resultat = []; return }
         söker = true
-        resultat = Globalsökning.sök(text, i: arkiv.kunder)
-        söker = false
+        let kunder = arkiv.kunder
+        sökjobb?.cancel()
+        sökjobb = Task.detached(priority: .userInitiated) {
+            let r = Globalsökning.sök(text, i: kunder)
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                resultat = r
+                söker = false
+            }
+        }
     }
 }

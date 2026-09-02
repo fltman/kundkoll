@@ -13,6 +13,7 @@ struct Kontaktvy: View {
     @State private var träffar: [Kontakt] = []
     @State private var nyttNamn = ""
     @State private var redigerar: Kontakt?
+    @State private var attTaBort: Kontakt?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -36,6 +37,21 @@ struct Kontaktvy: View {
             .padding(16)
         }
         .frame(width: 760, height: 520)
+        .confirmationDialog(
+            "Ta bort kontakten från kunden?",
+            isPresented: Binding(get: { attTaBort != nil }, set: { if !$0 { attTaBort = nil } }),
+            presenting: attTaBort
+        ) { k in
+            Button("Ta bort", role: .destructive) {
+                try? arkiv.taBort(k, hos: kund)
+                attTaBort = nil
+                kontakter = arkiv.kontakter(för: kund)
+            }
+            Button("Avbryt", role: .cancel) { attTaBort = nil }
+        } message: { k in
+            Text("\(k.namn) tas bort från \(kund.namn). Noten flyttas till papperskorgen; "
+                 + "posten i macOS Kontakter rörs inte.")
+        }
         .sheet(item: $redigerar) { k in
             Kontaktredigering(kund: kund, kontakt: k) { _ in
                 kontakter = arkiv.kontakter(för: kund)
@@ -74,8 +90,7 @@ struct Kontaktvy: View {
                                 .help("Finns i macOS Kontakter")
                         }
                         Button {
-                            try? arkiv.taBort(k, hos: kund)
-                            kontakter = arkiv.kontakter(för: kund)
+                            attTaBort = k
                         } label: {
                             Image(systemName: "minus.circle")
                         }

@@ -135,7 +135,21 @@ struct Inspelning: Codable, Identifiable, Hashable {
     var språk: String?
     /// Vad mötet landade i. Skrivs efter efterbearbetningen.
     var sammanfattning: Mötessammanfattning?
+    /// Sant medan arkivpasset pågår. Ligger det kvar när appen startas har
+    /// passet avbrutits, och då erbjuds en omkörning.
+    var bearbetas = false
+    /// Varför arkivpasset föll senast, när det gjorde det.
+    var arkivfel: String?
+    /// Varför sammanfattningen inte kunde skrivas, när den inte kunde det.
+    var sammanfattningsfel: String?
+    /// Hur rösterna delades upp: «pyannote», «klustring» eller «ingen».
+    var röstmetod: String?
+    /// Sådant röstanalysen vill säga — att avtrycken inte gick att läsa,
+    /// eller att reservmetoden fick användas.
+    var röstvarning: String?
     var efterbearbetad: Bool { arkivYttranden != nil }
+    /// Passet avbröts — appen stängdes eller föll mitt i.
+    var avbruten: Bool { bearbetas }
 
     /// Bästa tillgängliga transkript: arkivkvalitet om det finns, annars live.
     var yttranden: [Yttrande] { arkivYttranden ?? liveYttranden }
@@ -145,7 +159,10 @@ struct Inspelning: Codable, Identifiable, Hashable {
          arkivYttranden: [Yttrande]?, röstnamn: [Int: String] = [:],
          kallade: [String] = [], enspårig: Bool = false, källfil: String? = nil,
          språk: String? = nil,
-         sammanfattning: Mötessammanfattning? = nil) {
+         sammanfattning: Mötessammanfattning? = nil,
+         bearbetas: Bool = false, arkivfel: String? = nil,
+         sammanfattningsfel: String? = nil,
+         röstmetod: String? = nil, röstvarning: String? = nil) {
         self.id = id
         self.titel = titel
         self.inledd = inledd
@@ -161,6 +178,11 @@ struct Inspelning: Codable, Identifiable, Hashable {
         self.källfil = källfil
         self.språk = språk
         self.sammanfattning = sammanfattning
+        self.bearbetas = bearbetas
+        self.arkivfel = arkivfel
+        self.sammanfattningsfel = sammanfattningsfel
+        self.röstmetod = röstmetod
+        self.röstvarning = röstvarning
     }
 
     init(from avkodare: Decoder) throws {
@@ -180,5 +202,10 @@ struct Inspelning: Codable, Identifiable, Hashable {
         källfil = try c.decodeIfPresent(String.self, forKey: .källfil)
         språk = try c.decodeIfPresent(String.self, forKey: .språk)
         sammanfattning = try c.decodeIfPresent(Mötessammanfattning.self, forKey: .sammanfattning)
+        bearbetas = try c.decodeIfPresent(Bool.self, forKey: .bearbetas) ?? false
+        arkivfel = try c.decodeIfPresent(String.self, forKey: .arkivfel)
+        sammanfattningsfel = try c.decodeIfPresent(String.self, forKey: .sammanfattningsfel)
+        röstmetod = try c.decodeIfPresent(String.self, forKey: .röstmetod)
+        röstvarning = try c.decodeIfPresent(String.self, forKey: .röstvarning)
     }
 }

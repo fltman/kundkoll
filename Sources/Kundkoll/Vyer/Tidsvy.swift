@@ -14,6 +14,7 @@ struct Tidsvy: View {
     @State private var manuellVad = ""
     @State private var manuellLängd = ""
     @State private var manuellDag = Date()
+    @State private var attTaBort: Tidspost?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
@@ -23,6 +24,20 @@ struct Tidsvy: View {
         }
         .onAppear(perform: läsOm)
         .onChange(of: tidur.pågående) { läsOm() }
+        .confirmationDialog(
+            "Ta bort tidsposten?",
+            isPresented: Binding(get: { attTaBort != nil }, set: { if !$0 { attTaBort = nil } }),
+            presenting: attTaBort
+        ) { p in
+            Button("Ta bort", role: .destructive) {
+                try? arkiv.taBort(p, för: kund)
+                attTaBort = nil
+                läsOm()
+            }
+            Button("Avbryt", role: .cancel) { attTaBort = nil }
+        } message: { p in
+            Text("\(Tidspost.längdtext(p.sekunder)) · \(p.vad) tas bort ur loggen.")
+        }
     }
 
     // MARK: - Uret
@@ -193,10 +208,7 @@ struct Tidsvy: View {
         .padding(.horizontal, 12).padding(.vertical, 8)
         .contentShape(.rect)
         .contextMenu {
-            Button("Ta bort", role: .destructive) {
-                try? arkiv.taBort(p, för: kund)
-                läsOm()
-            }
+            Button("Ta bort …", role: .destructive) { attTaBort = p }
         }
     }
 
@@ -295,6 +307,8 @@ struct Importrad: View {
                         .foregroundStyle(.tertiary)
                 }
                 Spacer()
+                Button("Avbryt") { kö.avbryt() }
+                    .help("Avbryter det som pågår. Mappen lämnas så att det går att köra om.")
             }
             .controlSize(.small)
             .padding(.horizontal, 16)

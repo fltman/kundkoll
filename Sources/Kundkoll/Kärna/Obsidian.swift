@@ -76,6 +76,44 @@ enum Obsidian {
         return (try? ny.write(to: listan, options: .atomic)) != nil
     }
 
+    /// Tar bort mappen ur Obsidians lista, när kunden tagits bort.
+    @discardableResult
+    static func avregistrera(valv mapp: URL) -> Bool {
+        skrivOmValv { valv in
+            let väg = mapp.standardizedFileURL.path
+            valv = valv.filter { ($0.value as? [String: Any])?["path"] as? String != väg }
+        }
+    }
+
+    /// Pekar om ett valv efter ett namnbyte. Obsidian läser listan när den
+    /// startar, så en körande Obsidian ser det först efter omstart.
+    @discardableResult
+    static func byt(valv gammal: URL, till ny: URL) -> Bool {
+        skrivOmValv { valv in
+            let g = gammal.standardizedFileURL.path
+            for (id, post) in valv {
+                guard var p = post as? [String: Any], p["path"] as? String == g else { continue }
+                p["path"] = ny.standardizedFileURL.path
+                valv[id] = p
+            }
+        }
+    }
+
+    /// Skriver Obsidians lista bara om något faktiskt ändrats — det är en
+    /// annan apps fil, och den ska inte röras i onödan.
+    private static func skrivOmValv(_ ändra: (inout [String: Any]) -> Void) -> Bool {
+        guard let data = try? Data(contentsOf: listan),
+              var rot = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              var valv = rot["vaults"] as? [String: Any] else { return false }
+        let före = valv.mapValues { ($0 as? [String: Any])?["path"] as? String ?? "" }
+        ändra(&valv)
+        let efter = valv.mapValues { ($0 as? [String: Any])?["path"] as? String ?? "" }
+        guard före != efter else { return false }
+        rot["vaults"] = valv
+        guard let ny = try? JSONSerialization.data(withJSONObject: rot) else { return false }
+        return (try? ny.write(to: listan, options: .atomic)) != nil
+    }
+
     /// Öppnar sökvägen, och gör mappen känd för Obsidian först om det behövs.
     /// - Parameter valvrot: kundens mapp. Utelämnas den letas den upp genom
     ///   att gå uppåt tills en mapp med `.obsidian` hittas.

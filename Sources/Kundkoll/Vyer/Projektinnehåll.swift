@@ -22,6 +22,10 @@ struct Projektinnehåll: View {
     /// Ett skrivförsök per gång vyn visas — annars skulle ett projekt utan
     /// underlag försöka om vid varje omritning.
     @State private var harFörsöktSkriva = false
+    /// Om underlaget ändrats sedan lägesbilden skrevs. Räknas när vyn läser
+    /// in, inte i varje omritning — svaret kräver att alla möten läses.
+    @State private var lägetGammalt = false
+    @State private var fakta = ""
 
     enum Flik: String, CaseIterable, Identifiable {
         case översikt, attGöra, inspelningar, anteckningar, tid
@@ -111,12 +115,11 @@ struct Projektinnehåll: View {
         .onAppear {
             läsIn()
             // Lägesbilden ska bara finnas där. Saknas den, eller har underlaget
-            // ändrats, skrivs den om — men högst en gång per besök, och bara
-            // när chattens modell är på plats.
-            lägesbild = Läget.läs(kund: kund, projekt: projekt)
-            if !harFörsöktSkriva, Modellval.läs().färdig,
-               lägesbild == nil
-               || Läget.gammal(lägesbild!, kund: kund, projekt: projekt, arkiv: arkiv) {
+            // ändrats, skrivs den om — men högst en gång per besök, bara när
+            // chattens modell är på plats, och bara om automatiska anrop är
+            // tillåtna: annars skrivs den först med knappen.
+            if !harFörsöktSkriva, Inställningar.automatiskaModellanrop, Modellval.läs().färdig,
+               lägesbild == nil || lägetGammalt {
                 harFörsöktSkriva = true
                 skrivLäget()
             }
@@ -132,7 +135,7 @@ struct Projektinnehåll: View {
                 Avsnittsrubrik("Läget just nu")
                 if skriverLäget { ProgressView().controlSize(.mini) }
                 Spacer()
-                Text(faktarad)
+                Text(fakta)
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -144,7 +147,7 @@ struct Projektinnehåll: View {
                         Text("Skriven \(DateFormatter.klocka.string(from: lägesbild.skriven))")
                             .font(.caption)
                             .foregroundStyle(.tertiary)
-                        if Läget.gammal(lägesbild, kund: kund, projekt: projekt, arkiv: arkiv) {
+                        if lägetGammalt {
                             Text("· underlaget har ändrats")
                                 .font(.caption)
                                 .foregroundStyle(.orange)
@@ -174,6 +177,17 @@ struct Projektinnehåll: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(14)
                     .kort()
+            } else if !Inställningar.automatiskaModellanrop {
+                HStack(spacing: 10) {
+                    Text("Lägesbilden skrivs av modellen på begäran.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                    Button("Skriv lägesbilden") { skrivLäget() }
+                        .disabled(!Modellval.läs().färdig)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(14)
+                .kort()
             }
         }
     }
@@ -201,6 +215,7 @@ struct Projektinnehåll: View {
         Task {
             do {
                 lägesbild = try await Läget.skriv(kund: kund, projekt: projekt, arkiv: arkiv)
+                lägetGammalt = false
             } catch {
                 lägesfel = error.localizedDescription
             }
@@ -279,6 +294,7 @@ struct Projektinnehåll: View {
                     .foregroundStyle(.secondary)
             } else {
                 Inspelningslista(
+                    kund: kund,
                     rader: inspelningar,
                     öppna: { öppnad = .init(inspelning: $0, mapp: $1) },
                     kasta: { attKasta = .init(inspelning: $0, mapp: $1) })
@@ -301,5 +317,10 @@ struct Projektinnehåll: View {
     private func läsIn() {
         kopplade = arkiv.kopplade(för: projekt)
         inspelningar = arkiv.inspelningar(för: kund).filter { $0.0.projekt == projekt.namn }
+        lägesbild = Läget.läs(kund: kund, projekt: projekt)
+        lägetGammalt = lägesbild.map {
+            Läget.gammal($0, kund: kund, projekt: projekt, arkiv: arkiv)
+        } ?? false
+        fakta = faktarad
     }
 }

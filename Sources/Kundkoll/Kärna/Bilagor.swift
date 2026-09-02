@@ -70,29 +70,31 @@ enum Bilagor {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
         p.arguments = [skript.path, adress, mapp.path, String(antal)]
-        let ut = Pipe(), fel = Pipe()
-        p.standardOutput = ut
-        p.standardError = fel
-        try p.run()
-        let data = ut.fileHandleForReading.readDataToEndOfFile()
-        let felData = fel.fileHandleForReading.readDataToEndOfFile()
-        p.waitUntilExit()
+        let utfall = try await Underprocess.kör(p, tidsgräns: 10 * 60)
 
-        guard p.terminationStatus == 0 else {
-            let text = String(data: felData, encoding: .utf8) ?? ""
+        guard utfall.kod == 0 else {
+            let text = utfall.feltext
             throw text.contains("not allowed") || text.contains("-1743")
                 ? Fel.nekad
-                : Fel.frånMail(text.trimmingCharacters(in: .whitespacesAndNewlines))
+                : Fel.frånMail(text)
         }
-        return tolka(String(data: data, encoding: .utf8) ?? "")
+        return tolka(utfall.uttext, inom: mapp)
     }
 
-    static func tolka(_ text: String) -> [Bilaga] {
-        text.split(separator: "\n").compactMap { rad in
+    /// - Parameter inom: mappen bilagorna ska ligga i. Filnamnet kommer från
+    ///   avsändaren, och ett namn med snedstreck eller punkt-punkt får inte
+    ///   peka någon annanstans. Skriptet rensar namnet; det här är bältet
+    ///   till hängslena.
+    static func tolka(_ text: String, inom mapp: URL? = nil) -> [Bilaga] {
+        return text.split(separator: "\n").compactMap { rad in
             let f = rad.split(separator: "\u{1F}", omittingEmptySubsequences: false).map(String.init)
             guard f.count >= 4, let storlek = Int(f[3].trimmingCharacters(in: .whitespaces)),
                   ärIntressant(f[1]) else { return nil }
-            return Bilaga(ämne: f[0], namn: f[1], fil: f[2], storlek: storlek)
+            let väg = URL(fileURLWithPath: f[2]).standardizedFileURL.path
+            if let mapp, !Arkivet.ligger(väg, i: mapp) || Arkivet.kanonisk(väg) == Arkivet.kanonisk(mapp.path) {
+                return nil
+            }
+            return Bilaga(ämne: f[0], namn: f[1], fil: väg, storlek: storlek)
         }
     }
 
@@ -127,7 +129,7 @@ enum Bilagor {
         case "png", "jpg", "jpeg", "heic", "tiff", "tif", "gif", "bmp", "webp":
             return await textUrBild(url)
         case "docx", "pptx", "xlsx":
-            return textUrKontorsfil(url)
+            return await textUrKontorsfil(url)
         default:
             return nil
         }
@@ -179,7 +181,7 @@ enum Bilagor {
     }
 
     /// docx, pptx och xlsx är zip-arkiv med XML. Texten sitter mellan taggarna.
-    private static func textUrKontorsfil(_ url: URL) -> String? {
+    private static func textUrKontorsfil(_ url: URL) async -> String? {
         let temp = FileManager.default.temporaryDirectory
             .appending(path: "kundkoll-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: temp) }
@@ -189,8 +191,7 @@ enum Bilagor {
         p.arguments = ["-qq", "-o", url.path, "-d", temp.path]
         p.standardOutput = FileHandle.nullDevice
         p.standardError = FileHandle.nullDevice
-        guard (try? p.run()) != nil else { return nil }
-        p.waitUntilExit()
+        guard (try? await Underprocess.väntaIn(p, tidsgräns: 60)) != nil else { return nil }
         guard p.terminationStatus == 0 else { return nil }
 
         guard let filer = FileManager.default.enumerator(at: temp, includingPropertiesForKeys: nil)

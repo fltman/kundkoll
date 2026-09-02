@@ -21,13 +21,17 @@ enum Notiser {
             .requestAuthorization(options: [.alert, .sound]) { _, _ in }
     }
 
-    /// En notis nu. `kund` följer med så att ett klick kan öppna rätt ställe.
-    static func skicka(titel: String, text: String, kund: String? = nil) {
+    /// En notis nu. `kund` följer med så att ett klick kan öppna rätt ställe,
+    /// och `mapp` så att det kan bli själva mötet.
+    static func skicka(titel: String, text: String, kund: String? = nil, mapp: URL? = nil) {
         guard kanNotisa else { return }
         let innehåll = UNMutableNotificationContent()
         innehåll.title = titel
         innehåll.body = text
-        if let kund { innehåll.userInfo = ["kund": kund] }
+        var info: [String: Any] = [:]
+        if let kund { info["kund"] = kund }
+        if let mapp { info["inspelning"] = mapp.path }
+        innehåll.userInfo = info
         UNUserNotificationCenter.current().add(
             UNNotificationRequest(identifier: UUID().uuidString,
                                   content: innehåll, trigger: nil))
@@ -103,22 +107,26 @@ enum Notiser {
             }
             let info = svar.notification.request.content.userInfo
             guard let kund = info["kund"] as? String else { return }
-            let möte = info["möte"] as? String
+            var samlat: [String: String] = [:]
+            if let möte = info["möte"] as? String { samlat["möte"] = möte }
+            if let mapp = info["inspelning"] as? String { samlat["inspelning"] = mapp }
+            let vidare = samlat
             await MainActor.run {
-                NotificationCenter.default.post(
-                    name: .öppnaKund, object: kund,
-                    userInfo: möte.map { ["möte": $0] } ?? [:])
+                NotificationCenter.default.post(name: .öppnaKund, object: kund, userInfo: vidare)
             }
         }
     }
 
-    /// Vad ett färdigbearbetat möte är värt att säga.
-    static func mötetKlart(_ inspelning: Inspelning) {
+    /// Vad ett färdigbearbetat möte är värt att säga. Med mappen följer ett
+    /// klick hela vägen till mötet, inte bara till kunden.
+    static func mötetKlart(_ inspelning: Inspelning, mapp: URL? = nil) {
         let antal = inspelning.sammanfattning?.åtaganden.count ?? 0
         let text: String
         switch antal {
         case 0 where inspelning.sammanfattning == nil:
-            text = "Transkriptet är klart."
+            text = inspelning.sammanfattningsfel == nil
+                ? "Transkriptet är klart."
+                : "Transkriptet är klart, men sammanfattningen kunde inte skrivas."
         case 0:
             text = "Sammanfattat — inga åtaganden."
         case 1:
@@ -126,6 +134,14 @@ enum Notiser {
         default:
             text = "Sammanfattat — \(antal) åtaganden på tavlan."
         }
-        skicka(titel: inspelning.titel, text: text, kund: inspelning.kund)
+        skicka(titel: inspelning.titel, text: text, kund: inspelning.kund, mapp: mapp)
+    }
+
+    /// Ett arkivpass som föll ska sägas — tidigare stod mötet som «live»
+    /// för alltid utan ett ord.
+    static func bearbetningFöll(_ inspelning: Inspelning, fel: String, mapp: URL? = nil) {
+        skicka(titel: inspelning.titel,
+               text: "Efterbearbetningen misslyckades: \(fel)",
+               kund: inspelning.kund, mapp: mapp)
     }
 }

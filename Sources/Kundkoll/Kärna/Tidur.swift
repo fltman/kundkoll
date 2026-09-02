@@ -91,6 +91,17 @@ final class Tidur: ObservableObject {
         pågående?.vad = vad
     }
 
+    /// Ett ur som går hos en kund som byter namn ska följa med.
+    func byt(kund gammalt: String, till nytt: String) {
+        guard pågående?.kund == gammalt else { return }
+        pågående?.kund = nytt
+    }
+
+    func byt(projekt gammalt: String, till nytt: String, hos kund: String) {
+        guard pågående?.kund == kund, pågående?.projekt == gammalt else { return }
+        pågående?.projekt = nytt
+    }
+
     func pausa(vid tid: Date = Date()) {
         guard var p = pågående, !p.pausad else { return }
         p.ackumulerat += max(0, tid.timeIntervalSince(p.senasteStart))

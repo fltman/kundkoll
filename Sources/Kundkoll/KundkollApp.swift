@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 /// `Kundkoll --test` kör provsviten i terminalen, annars startar appen.
 /// Testramverken följer inte med Command Line Tools, så testerna bor i appen.
@@ -177,7 +178,42 @@ struct Ingång {
     }
 }
 
+/// Tar hand om start och avslut.
+///
+/// Utan avslutshanteraren överlevde whisper-server appen — 33 föräldralösa
+/// processer låg på maskinen efter två dagars byggen — och en inspelning som
+/// pågick vid ⌘Q lämnade sina wav-filer utan giltigt huvud.
+@MainActor
+final class Appdelegat: NSObject, NSApplicationDelegate {
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        // Importer och omkörningar som väntade när appen stängdes.
+        Importkö.delad.återuppta()
+    }
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        let session = Inspelningssession.delad
+        Task { @MainActor in
+            if session.pågår {
+                // Stoppet sparar livetranskriptet och stänger spåren. Arkiv-
+                // passet som startar då hinner inte, men syns som avbrutet
+                // vid nästa start och kan tas upp igen.
+                _ = await session.stoppa()
+            } else if session.läge == .avslutar {
+                for _ in 0..<120 where session.läge == .avslutar {
+                    try? await Task.sleep(for: .milliseconds(250))
+                }
+            }
+            Importkö.delad.sparaUndan()
+            await Whisper.delad.avsluta()
+            sender.reply(toApplicationShouldTerminate: true)
+        }
+        return .terminateLater
+    }
+}
+
 struct Kundkoll: App {
+    @NSApplicationDelegateAdaptor(Appdelegat.self) private var delegat
     @StateObject private var arkiv = Arkivet.shared
     @StateObject private var session = Inspelningssession.delad
     @StateObject private var adressbok = Adressboken.shared
@@ -216,7 +252,7 @@ struct Kundkoll: App {
                     .keyboardShortcut("k", modifiers: .command)
             }
             CommandGroup(after: .appSettings) {
-                Button("AI-modell och nyckel …") {
+                Button("Inställningar …") {
                     NotificationCenter.default.post(name: .visaNyckel, object: nil)
                 }
                 .keyboardShortcut(",", modifiers: .command)

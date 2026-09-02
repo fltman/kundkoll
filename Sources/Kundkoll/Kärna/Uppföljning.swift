@@ -43,8 +43,9 @@ enum Uppföljning {
             .compactMap(\.epost.first)
     }
 
-    /// Öppnar ett utkast i Mail, synligt och osänt.
-    static func öppnaUtkast(ämne: String, text: String, till: [String]) throws {
+    /// Öppnar ett utkast i Mail, synligt och osänt. Asynkron: är Mail inte
+    /// igång tar starten sekunder, och de ska inte frysa fönstret.
+    static func öppnaUtkast(ämne: String, text: String, till: [String]) async throws {
         var rader = [
             "tell application \"Mail\"",
             "set utkast to make new outgoing message with properties "
@@ -59,14 +60,10 @@ enum Uppföljning {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
         p.arguments = rader.flatMap { ["-e", $0] }
-        let felrör = Pipe()
-        p.standardError = felrör
-        try p.run()
-        p.waitUntilExit()
-        guard p.terminationStatus == 0 else {
-            let data = felrör.fileHandleForReading.readDataToEndOfFile()
-            throw Enkeltfel("Mail kunde inte öppna utkastet: "
-                            + (String(data: data, encoding: .utf8) ?? "okänt fel"))
+        let utfall = try await Underprocess.kör(p, tidsgräns: 60)
+        guard utfall.kod == 0 else {
+            let text = utfall.feltext
+            throw Enkeltfel("Mail kunde inte öppna utkastet: " + (text.isEmpty ? "okänt fel" : text))
         }
     }
 

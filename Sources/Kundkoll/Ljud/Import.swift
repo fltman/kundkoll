@@ -5,7 +5,8 @@ import AVFoundation
 ///
 /// Teams och Zoom sparar möten som mp4, telefonen som m4a, diktafonen som wav.
 /// AVFoundation läser dem alla, så filen behöver bara räknas om till det format
-/// whisper vill ha.
+/// whisper vill ha. Resten — transkribering, röster, sammanfattning — är samma
+/// arkivpass som efter ett möte, se `Efterbearbetning`.
 ///
 /// Till skillnad från en inspelning gjord i appen finns ingen kanaluppdelning
 /// här — allt ligger i ett spår. Röstanalysen får i stället dela upp det, och
@@ -18,14 +19,6 @@ actor Import {
         var andel: Double?
         /// Det senaste transkriberade, så att man ser att det rör sig.
         var senaste: String?
-    }
-
-    private let whisper: Whisper
-    private let röstanalys: Röstanalys
-
-    init(whisper: Whisper = Whisper(), röstanalys: Röstanalys = Röstanalys()) {
-        self.whisper = whisper
-        self.röstanalys = röstanalys
     }
 
     /// Format vi tar emot. Listan är bred med flit: hellre försöka och
@@ -56,6 +49,7 @@ actor Import {
 
         let skrivare = try Spårskrivare(fil: mål)
         var antal = 0
+        var sedanKoll = 0
         while let buffert = utgång.copyNextSampleBuffer() {
             guard let block = CMSampleBufferGetDataBuffer(buffert) else { continue }
             var längd = 0
@@ -69,7 +63,17 @@ actor Import {
             }
             skrivare.skriv(prov)
             antal += prov.count
+            sedanKoll += prov.count
             CMSampleBufferInvalidate(buffert)
+            // Ett avbrott ska märkas även under en lång omräkning.
+            if sedanKoll > 160_000 {
+                sedanKoll = 0
+                if Task.isCancelled {
+                    läsare.cancelReading()
+                    skrivare.stäng()
+                    throw CancellationError()
+                }
+            }
         }
         skrivare.stäng()
 
@@ -98,138 +102,105 @@ actor Import {
         let mapp = try await MainActor.run {
             try Arkivet.shared.nyInspelningsmapp(placering: placering, titel: titel, datum: inledd)
         }
-        // En avbruten import lämnade tidigare ljudfilen kvar utan möte.json.
-        // Mappen syntes inte i appen, gick inte att radera där, och låg kvar i
-        // Finder — i ett fall 72 MB.
-        var lyckades = false
+        // Faller omräkningen finns inget att behålla. Faller transkriberingen
+        // däremot — fel språk, saknad motor — ligger det omräknade ljudet
+        // kvar med felet i möte.json, så att det går att köra om i stället
+        // för att importera från början. Ett avbrott städar bort allt.
+        var behåll = false
         defer {
-            if !lyckades { try? FileManager.default.removeItem(at: mapp) }
+            if !behåll { try? FileManager.default.removeItem(at: mapp) }
         }
 
         let wav = mapp.appending(path: "motpart.wav")
         let längd = try await Self.tillWhisperformat(källa, mål: wav)
+        behåll = true
 
-        await MainActor.run {
-            vidLäge(Läge(steg: "Transkriberar \(formateraLängd(längd)) med KB-Whisper", andel: 0))
-        }
-        let rader = try await Arkivtranskribering.kör(
-            fil: wav, röst: .motpart, språk: språk, totalLängd: längd,
-            vidFramsteg: { f in
-                vidLäge(Läge(steg: "Transkriberar \(formateraLängd(längd))",
-                             andel: f.andel, senaste: f.senasteRad))
-            })
-        guard !rader.isEmpty else { throw Fel.ingetTal }
-
-        let uppdelning = await röstanalys.delaUpp(
-            fil: wav, yttranden: rader, antal: väntadeRöster, profiler: profiler,
-            vidLäge: { steg in vidLäge(Läge(steg: steg, andel: nil)) })
-        let märkta = uppdelning.yttranden
-        let namn = uppdelning.namn
-
-        await MainActor.run { vidLäge(Läge(steg: "Sammanfattar mötet", andel: nil)) }
-        var inspelning = Inspelning(
+        let stomme = Inspelning(
             titel: titel, inledd: inledd, längd: längd,
             kund: placering.kundnamn,
             projekt: { if case .projekt(let p) = placering { p.namn } else { nil } }(),
             mikrofon: nil,
             liveYttranden: [],
-            arkivYttranden: märkta,
-            röstnamn: namn,
+            arkivYttranden: nil,
             kallade: [],
             enspårig: true,
             källfil: källa.lastPathComponent,
             språk: språk)
 
-        inspelning.sammanfattning = try? await Sammanfattare()
-            .skriv(för: inspelning, kund: placering.kundnamn)
-        let klar = inspelning
-        try await MainActor.run {
-            try Arkivet.shared.spara(klar, i: mapp)
-            // En importerad inspelning ska ge uppgifter på tavlan precis som
-            // ett möte som spelats in i appen.
-            if let s = klar.sammanfattning {
-                Uppgiftssamling.frånMöte(s, inspelning: klar, mapp: mapp)
+        let klar: Inspelning
+        do {
+            klar = try await Efterbearbetning.kör(stomme, mapp: mapp, profiler: profiler,
+                                                 språk: språk, väntadeRöster: väntadeRöster) { l in
+                vidLäge(Läge(steg: l.steg, andel: l.andel, senaste: l.senaste))
             }
-            Notiser.mötetKlart(klar)
+        } catch is CancellationError {
+            behåll = false
+            throw CancellationError()
         }
-        lyckades = true
-        return (inspelning, mapp)
+        await MainActor.run { Notiser.mötetKlart(klar, mapp: mapp) }
+        return (klar, mapp)
     }
 
     /// Gör klart en inspelning vars ljud finns men vars metadata saknas.
     ///
-    /// Ljudet är redan i rätt format, så bara transkribering och röstuppdelning
-    /// återstår.
+    /// Ljudet är redan i rätt format. Ligger jag.wav bredvid motpart.wav är
+    /// det en inspelning gjord i appen, och båda spåren tas med — tidigare
+    /// lästes bara motparten, och ens egen halva av mötet försvann.
     func slutför(mapp: URL,
                  placering: Placering,
                  profiler: [Röstprofil],
                  titel angiven: String? = nil,
                  språk: String? = "sv",
                  vidLäge: @Sendable @escaping (Läge) -> Void) async throws -> Inspelning {
-        let wav = mapp.appending(path: "motpart.wav")
-        guard FileManager.default.fileExists(atPath: wav.path) else { throw Fel.ingetLjud }
-
-        let ljud = try AVAudioFile(forReading: wav)
-        let längd = Double(ljud.length) / ljud.processingFormat.sampleRate
-        let inledd = (try? wav.resourceValues(forKeys: [.contentModificationDateKey])
-            .contentModificationDate) ?? Date()
-
-        await MainActor.run {
-            vidLäge(Läge(steg: "Transkriberar \(formateraLängd(längd))", andel: 0))
+        let fm = FileManager.default
+        let jag = mapp.appending(path: "jag.wav")
+        let motpart = mapp.appending(path: "motpart.wav")
+        guard fm.fileExists(atPath: motpart.path) || fm.fileExists(atPath: jag.path) else {
+            throw Fel.ingetLjud
         }
-        let rader = try await Arkivtranskribering.kör(
-            fil: wav, röst: .motpart, språk: språk, totalLängd: längd,
-            vidFramsteg: { f in
-                vidLäge(Läge(steg: "Transkriberar \(formateraLängd(längd))",
-                             andel: f.andel, senaste: f.senasteRad))
-            })
-        guard !rader.isEmpty else { throw Fel.ingetTal }
-
-        let uppdelning = await röstanalys.delaUpp(
-            fil: wav, yttranden: rader, antal: nil, profiler: profiler,
-            vidLäge: { steg in vidLäge(Läge(steg: steg, andel: nil)) })
+        let tvåspårig = fm.fileExists(atPath: jag.path) && fm.fileExists(atPath: motpart.path)
+        for f in [jag, motpart] where fm.fileExists(atPath: f.path) {
+            _ = try? Wav.rättaHuvud(i: f)
+        }
+        let ljudfil = fm.fileExists(atPath: motpart.path) ? motpart : jag
+        let längd = [jag, motpart].filter { fm.fileExists(atPath: $0.path) }
+            .map { Wav.längd(av: $0) }.max() ?? 0
+        let inledd = (try? ljudfil.resourceValues(forKeys: [.contentModificationDateKey])
+            .contentModificationDate) ?? Date()
 
         // Titeln står i mappnamnet: "2026-08-31 1548 magnus 1on1".
         let namn = mapp.lastPathComponent
         let urMapp = namn.split(separator: " ").dropFirst(2).joined(separator: " ")
         let titel = angiven ?? (urMapp.isEmpty ? namn : urMapp)
 
-        await MainActor.run { vidLäge(Läge(steg: "Sammanfattar mötet", andel: nil)) }
-        var inspelning = Inspelning(
+        let stomme = Inspelning(
             titel: titel,
             inledd: inledd, längd: längd,
             kund: placering.kundnamn,
             projekt: { if case .projekt(let p) = placering { p.namn } else { nil } }(),
             mikrofon: nil,
             liveYttranden: [],
-            arkivYttranden: uppdelning.yttranden,
-            röstnamn: uppdelning.namn,
+            arkivYttranden: nil,
             kallade: [],
-            enspårig: true,
+            enspårig: !tvåspårig,
             källfil: nil,
             språk: språk)
 
-        inspelning.sammanfattning = try? await Sammanfattare()
-            .skriv(för: inspelning, kund: placering.kundnamn)
-        let klar = inspelning
-        try await MainActor.run {
-            try Arkivet.shared.spara(klar, i: mapp)
-            if let s = klar.sammanfattning {
-                Uppgiftssamling.frånMöte(s, inspelning: klar, mapp: mapp)
-            }
-            Notiser.mötetKlart(klar)
+        let klar = try await Efterbearbetning.kör(stomme, mapp: mapp, profiler: profiler,
+                                                 språk: språk) { l in
+            vidLäge(Läge(steg: l.steg, andel: l.andel, senaste: l.senaste))
         }
-        return inspelning
+        await MainActor.run { Notiser.mötetKlart(klar, mapp: mapp) }
+        return klar
     }
 
     enum Fel: LocalizedError {
-        case ingetLjud, kanInteLäsa, tomtLjud, ingetTal
+        case ingetLjud, kanInteLäsa, tomtLjud
         var errorDescription: String? {
             switch self {
             case .ingetLjud: "Filen innehåller inget ljudspår."
             case .kanInteLäsa: "Filformatet gick inte att läsa."
             case .tomtLjud: "Ljudspåret är tomt."
-            case .ingetTal: "Hittade inget tal i inspelningen."
             }
         }
     }
