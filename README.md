@@ -159,6 +159,11 @@ Korten dras mellan spalterna och öppnas med ett klick — det mesta är utplock
 av en modell, och en modell formulerar sig inte alltid som man själv skulle ha
 gjort. Tavlan skrivs som `Att göra.md` i kundens valv så den syns i Obsidian.
 
+Tavlan filtreras på person: menyn i hörnet listar dem som har öppna kort,
+med antal, och «Utan person». Namnen är rensade — «Röst 1 (Andreas)» blir
+Andreas, och ett förnamn som passar en enda kontakt blir den kontakten. Står
+filtret på någon får ett nytt kort den personen.
+
 Modellen räknar också ut **riktiga datum**: «före fredag» sagt en onsdag blir
 fredagens datum, och det som passerats utan att bli klart rödmarkeras. En
 uppgift kan läggas i macOS Påminnelser — envägs: tavlan är sanningen och
@@ -320,7 +325,7 @@ fönstret först, gör flera försök, och faller tillbaka på hela skärmen.
 
 ```bash
 ./scripts/bygg-app.sh                                        # dist/Kundkoll.app
-.build/arm64-apple-macosx/debug/Kundkoll --test              # 595 enhetstester
+.build/arm64-apple-macosx/debug/Kundkoll --test              # 603 enhetstester
 .build/arm64-apple-macosx/debug/Kundkoll --prov-ljud f.wav   # hela kedjan skarpt
 .build/arm64-apple-macosx/debug/Kundkoll --prov-röst ljud.wav w.json facit.json
 .build/arm64-apple-macosx/debug/Kundkoll --prov-import fil.mp4 fil.m4a

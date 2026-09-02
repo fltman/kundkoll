@@ -8,6 +8,7 @@ enum Tester {
     static func kör() -> Int32 {
         arkivet()
         robusthet()
+        personfilter()
         ljud()
         whisper()
         liveinsikter()
@@ -2596,5 +2597,37 @@ extension Tester {
             Prov.lika(ut, "hej", "utdata läses till slut")
             Prov.kolla(bröts, "en process som inte blir klar avslutas vid tidsgränsen")
         }
+    }
+}
+
+// MARK: - Tavlans personfilter
+
+extension Tester {
+
+    static func personfilter() {
+        Prov.svit("Tavlans personfilter")
+        let kontakter = [Kontakt(namn: "Anders Bjarby"), Kontakt(namn: "Andreas Lund"),
+                         Kontakt(namn: "Kristin Berg")]
+
+        let röst = Kanbanvy.personer(i: "Röst 1 (Andreas)", kontakter: kontakter)
+        Prov.lika(röst.map(\.namn), ["Andreas Lund"], "«Röst 1 (Andreas)» är kontakten Andreas Lund")
+
+        let hel = Kanbanvy.personer(i: "anders bjarby", kontakter: kontakter)
+        let kort = Kanbanvy.personer(i: "Anders", kontakter: kontakter)
+        Prov.lika(hel.first?.nyckel, kort.first?.nyckel, "«Anders» och «anders bjarby» är samma person")
+        Prov.lika(kort.first?.namn, "Anders Bjarby", "och visas med kontaktens namn")
+
+        let två = Kanbanvy.personer(i: "Kristin och Anders", kontakter: kontakter)
+        Prov.lika(två.map(\.namn), ["Kristin Berg", "Anders Bjarby"], "«Kristin och Anders» är två personer")
+
+        Prov.lika(Kanbanvy.personer(i: nil, kontakter: kontakter).count, 0, "inget vem ger ingen person")
+        Prov.lika(Kanbanvy.personer(i: "null", kontakter: kontakter).count, 0, "«null» ger ingen person")
+
+        let tvetydiga = kontakter + [Kontakt(namn: "Anders Svensson")]
+        let a = Kanbanvy.personer(i: "Anders", kontakter: tvetydiga)
+        Prov.lika(a.first?.namn, "Anders", "två kontakter med samma förnamn slås inte ihop")
+
+        let okänd = Kanbanvy.personer(i: "Greg", kontakter: kontakter)
+        Prov.lika(okänd.first?.nyckel, "greg", "ett namn utan kontakt får sin egen nyckel")
     }
 }
