@@ -185,14 +185,48 @@ struct Ingång {
 /// pågick vid ⌘Q lämnade sina wav-filer utan giltigt huvud.
 @MainActor
 final class Appdelegat: NSObject, NSApplicationDelegate {
+    private var sigterm: DispatchSourceSignal?
+    private var städar = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Importer och omkörningar som väntade när appen stängdes.
         Importkö.delad.återuppta()
+        // pkill och skarmbild.sh --starta skickar SIGTERM, som dödar processen
+        // rakt av och lämnar whisper-server föräldralös. Här städas det på
+        // samma sätt som vid ⌘Q, och processen avslutas själv — att gå via
+        // NSApp.terminate från en signal lämnade appen stående.
+        signal(SIGTERM, SIG_IGN)
+        let källa = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
+        källa.setEventHandler { [weak self] in
+            // Inte inifrån dispatch-anropet: en nästlad körslinga där tömmer
+            // inte huvudkön, och städningens Task kom aldrig igång. Från
+            // körslingan själv fungerar det, precis som vid ⌘Q.
+            RunLoop.main.perform {
+                self?.städa()
+                exit(0)
+            }
+        }
+        källa.resume()
+        sigterm = källa
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        städa()
+        return .terminateNow
+    }
+
+    /// Städar inför avslutet: stoppar en pågående inspelning, sparar kön och
+    /// dödar whisper-server. Körslingan pumpas för hand tills det är klart:
+    /// att svara .terminateLater och ropa tillbaka från en Task fungerade
+    /// inte — i väntan på svaret servas inte huvudaktörns uppgifter, och
+    /// appen blev stående. Samma mönster som proven på kommandoraden.
+    /// Högst en halv minut; ett stopp mitt i ett möte väntar in whispers
+    /// sista fönster.
+    private func städa() {
+        guard !städar else { return }
+        städar = true
         let session = Inspelningssession.delad
+        let klart = Flagga()
         Task { @MainActor in
             if session.pågår {
                 // Stoppet sparar livetranskriptet och stänger spåren. Arkiv-
@@ -206,9 +240,16 @@ final class Appdelegat: NSObject, NSApplicationDelegate {
             }
             Importkö.delad.sparaUndan()
             await Whisper.delad.avsluta()
-            sender.reply(toApplicationShouldTerminate: true)
+            klart.klar = true
         }
-        return .terminateLater
+        let deadline = Date().addingTimeInterval(30)
+        while !klart.klar && Date() < deadline {
+            RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.05))
+        }
+    }
+
+    private final class Flagga: @unchecked Sendable {
+        var klar = false
     }
 }
 
