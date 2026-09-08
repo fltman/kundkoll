@@ -9,6 +9,19 @@ struct Minveckavy: View {
 
     @State private var rader: [(kund: Kund, uppgift: Uppgift)] = []
     @State private var redigerad: Redigeringsval?
+    /// Kontakterna per kund, för att känna igen personerna bakom korten.
+    @State private var kontakter: [String: [Kontakt]] = [:]
+    /// Vems kort som visas. Sparas, så att valet överlever ett byte av vy.
+    @AppStorage("kundkoll.minvecka.person") private var person = ""
+
+    private var synliga: [(kund: Kund, uppgift: Uppgift)] {
+        rader.filter { Personer.matchar($0.uppgift, kontakter: kontakter[$0.kund.namn] ?? [],
+                                        person: person) }
+    }
+
+    private var sammanställning: Personer.Sammanställning {
+        Personer.sammanställ(rader.map { (uppgift: $0.uppgift, kontakter: kontakter[$0.kund.namn] ?? []) })
+    }
 
     private struct Redigeringsval: Identifiable {
         let kund: Kund
@@ -32,9 +45,13 @@ struct Minveckavy: View {
                     Text(sammanfattning)
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                    Personfilter(sammanställning: sammanställning, person: $person)
                 }
                 if rader.isEmpty {
                     Text("Inget öppet åtagande hos någon kund. Skönt.")
+                        .foregroundStyle(.secondary)
+                } else if synliga.isEmpty {
+                    Text("Inget öppet för den personen.")
                         .foregroundStyle(.secondary)
                 }
                 ForEach(Grupp.allCases, id: \.self) { grupp in
@@ -57,11 +74,11 @@ struct Minveckavy: View {
     }
 
     private var sammanfattning: String {
-        let kunder = Set(rader.map(\.kund.namn)).count
-        switch rader.count {
+        let kunder = Set(synliga.map(\.kund.namn)).count
+        switch synliga.count {
         case 0: return ""
         case 1: return "1 öppet åtagande"
-        default: return "\(rader.count) öppna åtaganden hos "
+        default: return "\(synliga.count) öppna åtaganden hos "
             + (kunder == 1 ? "en kund" : "\(kunder) kunder")
         }
     }
@@ -102,7 +119,13 @@ struct Minveckavy: View {
                 HStack(spacing: 6) {
                     Text(rad.kund.namn)
                     if let p = u.projekt { Text("· \(p)") }
-                    if let vem = u.vem { Text("· \(vem)") }
+                    let namn = Personer.personer(i: u.vem, kontakter: kontakter[rad.kund.namn] ?? [])
+                        .map(\.namn)
+                    if !namn.isEmpty {
+                        Text("· \(namn.joined(separator: ", "))")
+                    } else if let vem = u.vem {
+                        Text("· \(vem)")
+                    }
                 }
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -124,7 +147,7 @@ struct Minveckavy: View {
     // MARK: - Urval
 
     private var grupperade: [Grupp: [(kund: Kund, uppgift: Uppgift)]] {
-        Dictionary(grouping: rader) { grupp($0.uppgift) }
+        Dictionary(grouping: synliga) { grupp($0.uppgift) }
             .mapValues { $0.sorted {
                 ($0.uppgift.senast ?? .distantFuture, $0.uppgift.skapad)
                     < ($1.uppgift.senast ?? .distantFuture, $1.uppgift.skapad)
@@ -159,5 +182,9 @@ struct Minveckavy: View {
                 .filter { $0.läge != .klart }
                 .map { (kund, $0) }
         }
+        kontakter = Dictionary(uniqueKeysWithValues: arkiv.kunder.map { ($0.namn, arkiv.kontakter(för: $0)) })
+        // Ett sparat val på någon som inte längre har kort ska inte lämna en
+        // tom vy.
+        if !sammanställning.gäller(person) { person = "" }
     }
 }

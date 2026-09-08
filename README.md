@@ -1,9 +1,12 @@
-# Kundkoll
+# Bjarbys kundkoll
 
 [![Patreon](https://img.shields.io/badge/Patreon-st%C3%B6d%20projektet-f96854?logo=patreon&logoColor=white)](https://www.patreon.com/AndersBjarby)
 
 Nativ macOS-app för att hålla ordning på mötes- och telefontranskriberingar
 per kund och projekt. Allt ljud och all transkribering sker lokalt på datorn.
+Av [Anders Bjarby](https://anders.bjarby.com); «Om»-rutan i appen länkar dit
+och till Patreon. Under huven heter appen fortfarande kundkoll — bundle-id,
+`.kundkoll`-mapparna och inställningarna är oförändrade.
 
 ## Läge
 
@@ -60,9 +63,13 @@ Sitter flera personer i mötet delas motpartsspåret upp per röst med pyannote,
 och personer kunden är känd för sedan tidigare känns igen automatiskt via
 röstavtryck. Vet du antalet röster kan du ange det i «Vem är vem» — det ger
 märkbart bättre uppdelning. Osäkra röster lämnas
-namnlösa hellre än att gissa fel.
+namnlösa hellre än att gissa fel — men «Vem är vem» visar hur väl varje
+röst liknar de kända, i procent och med färg för var tröskeln går, och ett
+klick sätter namnet.
 
-Språket väljs per möte och import: svenska, engelska eller låt motorn avgöra.
+Språket väljs per möte och import: svenska, engelska eller låt motorn avgöra
+— det sista för möten på flera språk, till exempel svenska och norska, där
+språket hittas per fönster. Valet minns till nästa inspelning.
 KB-Whisper är svensktrimmad och översätter engelska till svenska — uppmätt
 även med språket satt till engelska — så engelska möten tar automatiskt vägen
 via MLX eller den valda molnmotorn, och varje möte går att transkribera om
@@ -91,7 +98,10 @@ hand, och redigeras i appen — namn, roll, flera adresser och telefonnummer. En
 kontakt som skrivits upp för hand kan läggas upp i macOS Kontakter, och ändringar
 skrivas tillbaka dit. Det sker bara på knapptryck: adressboken är din egen och
 delas med telefonen, så appen ändrar inget där i bakgrunden. En person du satt
-namn på i ett transkript läggs upp som kontakt automatiskt.
+namn på i ett transkript läggs upp som kontakt automatiskt. Byter kontakten
+namn följer rösten, mötena och tavlan med, och röster som fått namn utan att
+finnas som kontakt listas under «Hantera» där de kopplas till rätt kontakt
+eller glöms.
 
 **Mail** (AppleScript): söker mejl på kundens adresser, öppnar dem i Mail.
 Vägen är vald efter mätning — mejlen ligger också som filer under
@@ -109,9 +119,10 @@ lovade att göra. Allt hamnar i `Transkript.md`, så det syns i Obsidian.
 Att öppna ett möte ger därför inte en vägg av text. Vyn har tre flikar —
 sammanfattning, transkript, att göra — och en chattpanel där hela samtalet
 ligger som underlag vid sidan av kunskapsbanken. Åtagandena är mötets egna
-kort på tavlan, inte en kopia: bockar man av ett här syns det där. Varje
-transkriptrad har en spelknapp — transkriptet är whispers ord, ljudet är
-facit. En knapp skriver ett uppföljningsmejl som utkast i Mail, och när
+kort på tavlan, inte en kopia: bockar man av ett här syns det där. Transkriptfliken
+har en spelare: mötet rullar, båda spåren i takt, och raden som hörs
+markeras och följs. Spelknappen på en rad hoppar dit — transkriptet är
+whispers ord, ljudet är facit. En knapp skriver ett uppföljningsmejl som utkast i Mail, och när
 efterbearbetningen blir klar i bakgrunden säger en notis till — klicket
 öppnar mötet. Faller den säger notisen det också, och mötet får märket «fel»
 i listan med orsaken i verktygstipset; stängs appen mitt i blir märket
@@ -136,7 +147,10 @@ stående underlag.
 
 ## Läget och tiden i ett projekt
 
-Projektöversikten inleds med **Läget just nu** — en lägesbild skriven av
+Projektöversikten visar de kommande möten som är kopplade till projektet,
+med samma Förbered och Spela in som hos kunden, och «Lägg till möte» kopplar
+dit fler — kundens egna, eller lediga möten i kalendern. Den inleds med
+**Läget just nu** — en lägesbild skriven av
 modellen ur mötessammanfattningar, tavlan, mejl och anteckningar, cachead och
 omskriven när underlaget ändrats. Bredvid en faktarad som alltid stämmer:
 möten, öppna uppgifter, försenade. Bilden sparas som `Läget.md` i
@@ -162,7 +176,8 @@ gjort. Tavlan skrivs som `Att göra.md` i kundens valv så den syns i Obsidian.
 Tavlan filtreras på person: menyn i hörnet listar dem som har öppna kort,
 med antal, och «Utan person». Namnen är rensade — «Röst 1 (Andreas)» blir
 Andreas, och ett förnamn som passar en enda kontakt blir den kontakten. Står
-filtret på någon får ett nytt kort den personen.
+filtret på någon får ett nytt kort den personen. Samma meny finns i Min
+vecka, över alla kunder.
 
 Modellen räknar också ut **riktiga datum**: «före fredag» sagt en onsdag blir
 fredagens datum, och det som passerats utan att bli klart rödmarkeras. En
@@ -316,6 +331,37 @@ behörigheter som är givna.
 ./scripts/skarmbild.sh --starta   # startar om appen först
 ```
 
+Dokumentationens bilder tas ur en påhittad kund, så att inga riktiga kunder
+syns:
+
+```bash
+python3 scripts/demokund.py --elevenlabs --kalender   # «Fjällbo Energi» med möten, mejl, tavla
+python3 scripts/demolive.py                           # samtalet som spelas upp under livedemon
+./scripts/skarmbilder.sh                              # fotograferar varje vy → docs/bilder/
+./scripts/bygg-site.sh                                # produktsidan i site/, med appen som zip
+python3 scripts/bygg-produktvideo.py                  # docs/produktvideo.mp4 ur bilderna och manuset
+python3 scripts/demokund.py --ta-bort                 # städar bort kunden igen
+```
+
+`demokund.py` skriver tre möten med ljud (ElevenLabs-röster med `--elevenlabs`,
+annars syntetiserat brus), mejl med bilagor, en tavla, tidslogg, ett sparat
+chattsamtal och röstavtryck. `--kalender` lägger tre möten i en egen kalender
+«Kundkoll demo». Allt tal görs av elevenlabs-skillens `generate_dialogue.py`.
+Skärmbildsskriptet startar en egen instans med `KUNDKOLL_ROT` pekande på en
+färsk kopia av kunden, kopplar en liten kodmapp till projektet Dataplattform
+och styr appen via System Events. Sist spelas ett riktigt möte in: samtalet
+från `demolive.py` spelas upp genom högtalarna medan appen lyssnar på
+datorljudet, så att livetranskriptet och insikterna på bilderna är äkta.
+Den vanliga appen startas om efteråt.
+
+Produktvideon byggs ur `docs/produktvideo-manus.md` och skärmbilderna; rösten
+görs av elevenlabs-skillens `generate_dialogue.py` med nyckeln i `ELEVENLABS_API_KEY`.
+
+Produktsidan i `site/` är statiska sidor — start, nedladdning, installation,
+manual och vanliga frågor — byggda ur `site/_*.html` av `bygg-site.sh`, som
+också kopierar bilderna och zippar appen till `site/nedladdning/`. Ladda upp
+mappen på vilken webbserver som helst.
+
 `screencapture -l <fönster-id>` svarar "could not create image from window" när
 appen ligger bakom — macOS släpper backing store för dolda fönster, och det ser
 ut som ett behörighetsfel utan att vara det. Skriptet lyfter därför fram
@@ -324,8 +370,8 @@ fönstret först, gör flera försök, och faller tillbaka på hela skärmen.
 ## Bygga
 
 ```bash
-./scripts/bygg-app.sh                                        # dist/Kundkoll.app
-.build/arm64-apple-macosx/debug/Kundkoll --test              # 603 enhetstester
+./scripts/bygg-app.sh                                        # dist/Bjarbys kundkoll.app
+.build/arm64-apple-macosx/debug/Kundkoll --test              # 635 enhetstester
 .build/arm64-apple-macosx/debug/Kundkoll --prov-ljud f.wav   # hela kedjan skarpt
 .build/arm64-apple-macosx/debug/Kundkoll --prov-röst ljud.wav w.json facit.json
 .build/arm64-apple-macosx/debug/Kundkoll --prov-import fil.mp4 fil.m4a

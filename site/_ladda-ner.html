@@ -1,0 +1,29 @@
+<h1>Ladda ner</h1>
+<p class="ingress dämpad">Bjarbys kundkoll är en nativ macOS-app. Den kräver macOS 26 och en Mac med Apple Silicon.</p>
+<div class="knappar">
+  <a class="knapp" href="nedladdning/ZIPNAMN">Ladda ner version VERSION (zip, cirka STORLEK)</a>
+  <a class="knapp sekundär" href="https://github.com/fltman/kundkoll/releases">Alla versioner på GitHub</a>
+</div>
+
+<h2>Första starten</h2>
+<ol class="steg">
+  <li><strong>Packa upp och flytta.</strong> Dra <em>Bjarbys kundkoll.app</em> till Program.</li>
+  <li><strong>Öppna med högerklick första gången.</strong> Appen är signerad med Developer ID men inte notariserad hos Apple. Högerklicka på appen, välj <em>Öppna</em>, och bekräfta. Därefter startar den som vanligt.</li>
+  <li><strong>Ge behörigheter.</strong> Mikrofon och Skärminspelning krävs — det senare för datorljudet, ScreenCaptureKit fångar bara ljud och ingen bild sparas. Kalender, Kontakter och Automatisering för Mail är frivilliga; utan dem syns inga möten, kontakter eller mejl.</li>
+  <li><strong>Sätt upp kringtjänsterna.</strong> Transkriberingen behöver whisper.cpp med KB-Whisper-modellerna, och röstanalysen en Pythonmiljö. Se <a href="installation.html">installationssidan</a>. Fliken <em>Diagnos</em> under ⌘, säger vad som finns och vad som saknas.</li>
+  <li><strong>Välj modell för chatten.</strong> Under ⌘, väljer du var språkmodellen körs och lägger in en nyckel, eller pekar på en lokal server.</li>
+</ol>
+
+<h2>Vad som ingår</h2>
+<table>
+  <tr><th>I appen</th><td>Inspelning, livetranskribering, arkivpass, röstanalys, kunskapsbank och sökning, chatt, tavla, brief, tidslogg, Obsidian-valv.</td></tr>
+  <tr><th>Installeras separat</th><td>whisper.cpp med KB-Whisper (svensk transkribering), Pythonmiljö med pyannote och speechbrain (röster), Ollama (insikter under samtal och betydelsesökning), Claude Code (kopplade mappar). Alla frivilliga utom whisper.cpp.</td></tr>
+  <tr><th>Kostar</th><td>Ingenting. Väljer du en molnmodell för chatten betalar du den leverantören per anrop.</td></tr>
+</table>
+
+<h2>Bygga själv</h2>
+<p>Källkoden ligger på <a href="https://github.com/fltman/kundkoll">GitHub</a>. Xcode behövs inte, Command Line Tools räcker:</p>
+<pre><code>git clone https://github.com/fltman/kundkoll.git
+cd kundkoll
+./scripts/bygg-app.sh        # dist/Bjarbys kundkoll.app</code></pre>
+<p class="liten">Med ett eget Developer ID-certifikat i <code>KUNDKOLL_SIGNERING</code> minns macOS behörigheterna mellan ombyggen. Utan signeras appen ad hoc.</p>

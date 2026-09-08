@@ -42,6 +42,22 @@ enum Efterbearbetning {
     /// - Parameter språk: "sv", "en" eller nil för att låta motorn avgöra.
     /// - Parameter väntadeRöster: antal talare när det är känt; annars de
     ///   kallade ur kalendern, om några.
+    /// Vilket möte passet ska utgå från.
+    ///
+    /// Jobbet kan ha stått i kö medan mötet ändrades — en import som hann
+    /// skriva sitt transkript, ett namn som satts för hand. Det som ligger på
+    /// disk när passet väl börjar är då nyare än stillbilden från köandet,
+    /// och ska vinna: annars skrivs transkriptet över redan på första raden,
+    /// och ett avbrott mitt i lämnar mötet tomt. Är det ett annat möte, eller
+    /// finns ingen läsbar möte.json, gäller den som skickades med.
+    static func utgångspunkt(_ ursprunglig: Inspelning, mapp: URL) -> Inspelning {
+        guard let data = try? Data(contentsOf: mapp.appending(path: "möte.json")),
+              let påDisk = try? JSONDecoder.kundkoll.decode(Inspelning.self, from: data),
+              påDisk.id == ursprunglig.id
+        else { return ursprunglig }
+        return påDisk
+    }
+
     static func kör(_ ursprunglig: Inspelning, mapp: URL, profiler: [Röstprofil],
                     språk: String?, väntadeRöster: Int? = nil,
                     vidLäge: @Sendable @escaping (Läge) -> Void) async throws -> Inspelning {
@@ -55,7 +71,7 @@ enum Efterbearbetning {
         // En krasch mitt i en inspelning lämnar wav-huvudet med längden noll.
         for (_, url) in spår { _ = try? Wav.rättaHuvud(i: url) }
 
-        var i = ursprunglig
+        var i = utgångspunkt(ursprunglig, mapp: mapp)
         i.bearbetas = true
         i.arkivfel = nil
         i.sammanfattningsfel = nil
@@ -71,8 +87,10 @@ enum Efterbearbetning {
                 let steg = "Transkriberar \(formateraLängd(längd))"
                 vidLäge(Läge(fas: .transkriberar, steg: steg, andel: bas))
                 do {
+                    // nil är «avgör själv» hela vägen: KB-modellen tar då
+                    // vägen via MLX, som hittar språket självt.
                     rader += try await Arkivtranskribering.kör(
-                        fil: url, röst: röst, språk: i.språk ?? "sv", totalLängd: längd,
+                        fil: url, röst: röst, språk: i.språk, totalLängd: längd,
                         vidFramsteg: { f in
                             vidLäge(Läge(fas: .transkriberar, steg: steg,
                                          andel: bas + f.andel * del, senaste: f.senasteRad))
@@ -100,6 +118,7 @@ enum Efterbearbetning {
             i.röstnamn = uppdelning.namn
             i.röstmetod = uppdelning.metod
             i.röstvarning = uppdelning.varning
+            i.röstavtryck = uppdelning.avtryck
             try await spara(i, i: mapp)
         } catch {
             i.bearbetas = false

@@ -9,6 +9,7 @@ enum Tester {
         arkivet()
         robusthet()
         personfilter()
+        tystnadsfiltret()
         ljud()
         whisper()
         liveinsikter()
@@ -1509,6 +1510,66 @@ enum Tester {
             }
         }
 
+        do {   // ett köat pass utgår från mötet som det ligger på disk
+            // Uppmätt: en import och en «Transkribera om» på samma mapp låg i
+            // kön samtidigt. Omkörningen bar med sig stillbilden från köandet
+            // — mötet innan importen skrivit något — och skrev över det
+            // färdiga transkriptet redan på sin första rad.
+            let mapp = FileManager.default.temporaryDirectory
+                .appending(path: "kundkoll-test-\(UUID().uuidString)")
+            try! FileManager.default.createDirectory(at: mapp, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: mapp) }
+            func skriv(_ i: Inspelning) {
+                try! JSONEncoder.kundkoll.encode(i).write(to: mapp.appending(path: "möte.json"))
+            }
+            let id = UUID()
+            let tomt = Inspelning(id: id, titel: "ai", inledd: Date(), längd: 60,
+                                  kund: "parti", projekt: nil, mikrofon: nil,
+                                  liveYttranden: [], arkivYttranden: nil)
+
+            Prov.lika(Efterbearbetning.utgångspunkt(tomt, mapp: mapp).id, tomt.id,
+                      "utan möte.json gäller den som skickades med")
+
+            var färdigt = tomt
+            färdigt.arkivYttranden = [Yttrande(röst: .motpart, text: "Det här är Ekot",
+                                               start: 0, slut: 2)]
+            skriv(färdigt)
+            Prov.lika(Efterbearbetning.utgångspunkt(tomt, mapp: mapp).arkivYttranden?.count, 1,
+                      "det som hunnit skrivas på disk vinner över stillbilden")
+
+            let annat = Inspelning(id: UUID(), titel: "annat möte", inledd: Date(), längd: 60,
+                                   kund: "parti", projekt: nil, mikrofon: nil,
+                                   liveYttranden: [], arkivYttranden: nil)
+            Prov.lika(Efterbearbetning.utgångspunkt(annat, mapp: mapp).id, annat.id,
+                      "men bara när det är samma möte")
+        }
+
+        do {   // ett nytt möte börjar om från noll
+            // Buffringen lever lika länge som inspelningssessionen, alltså
+            // hela appstarten, och tiderna räknas ur antalet matade prov.
+            // Uppmätt: ett möte som spelades in efter ett annat på 1782
+            // sekunder fick alla sina livetider 1782 sekunder för sent —
+            // bortom slutet på sitt eget ljud.
+            let b = Ljudbuffring()
+            _ = b.mata(ram(0.05, 1.0, 0))
+            _ = b.mata(ram(0.05, 1.0, 1))
+            _ = b.mata(tystnad(0.8, 2))
+            _ = b.spola()
+
+            _ = b.mata(ram(0.05, 1.0, 0))
+            _ = b.mata(ram(0.05, 1.0, 1))
+            let utan = b.mata(tystnad(0.8, 2)).fönster
+            Prov.kolla((utan?.start ?? 0) > 2,
+                       "utan nollställning fortsätter räkningen från förra mötet")
+
+            b.nollställ()
+            _ = b.mata(ram(0.05, 1.0, 0))
+            _ = b.mata(ram(0.05, 1.0, 1))
+            let efter = b.mata(tystnad(0.8, 2)).fönster
+            Prov.kolla(efter != nil, "fönstret stängs som vanligt efter nollställningen")
+            Prov.lika(efter?.start ?? -1, 0, "och det nya mötet börjar på noll")
+        }
+
         do {   // maxlängd
             let b = Ljudbuffring()
             var fönster: Ljudbuffring.Fönster?
@@ -1573,15 +1634,28 @@ enum Tester {
             Prov.kolla(c.senasteNivå < 0.1, "men ligger stilla vid tystnad (\(c.senasteNivå))")
         }
 
-        do {   // uppspelning: rätt spår för rätt röst
-            let mitt = Yttrande(röst: .jag, text: "x", start: 0, slut: 1)
-            let deras = Yttrande(röst: .motpart, text: "x", start: 0, slut: 1)
-            Prov.lika(Yttrandespelare.fil(för: mitt, enspårig: false), "jag.wav",
-                      "mitt yttrande spelas ur mitt spår")
-            Prov.lika(Yttrandespelare.fil(för: deras, enspårig: false), "motpart.wav",
-                      "motpartens ur deras")
-            Prov.lika(Yttrandespelare.fil(för: mitt, enspårig: true), "motpart.wav",
-                      "i en importerad fil ligger allt i motpart.wav")
+        do {   // spelaren: spåren och raden som hörs
+            let rot = FileManager.default.temporaryDirectory
+                .appending(path: "kundkoll-test-\(UUID().uuidString)")
+            defer { try? FileManager.default.removeItem(at: rot) }
+            try! FileManager.default.createDirectory(at: rot, withIntermediateDirectories: true)
+            try! Wav.data(av: []).write(to: rot.appending(path: "jag.wav"))
+            try! Wav.data(av: []).write(to: rot.appending(path: "motpart.wav"))
+            Prov.lika(Yttrandespelare.spår(i: rot, enspårig: false).map(\.lastPathComponent),
+                      ["jag.wav", "motpart.wav"], "en tvåspårig inspelning spelar båda spåren")
+            Prov.lika(Yttrandespelare.spår(i: rot, enspårig: true).map(\.lastPathComponent),
+                      ["motpart.wav"], "i en importerad fil ligger allt i motpart.wav")
+
+            let a = Yttrande(röst: .jag, text: "a", start: 0, slut: 2)
+            let b = Yttrande(röst: .motpart, text: "b", start: 2.5, slut: 5)
+            let c = Yttrande(röst: .jag, text: "c", start: 7, slut: 9)
+            let rader = [a, b, c]
+            Prov.lika(Yttrandespelare.rad(vid: 1, i: rader), a.id, "raden som pågår hörs")
+            Prov.lika(Yttrandespelare.rad(vid: 2.2, i: rader), a.id,
+                      "i pausen mellan två rader hålls den förra kvar")
+            Prov.lika(Yttrandespelare.rad(vid: 6, i: rader), b.id, "och den senast påbörjade vinner")
+            Prov.lika(Yttrandespelare.rad(vid: 8, i: rader), c.id, "fram till nästa")
+            Prov.kolla(Yttrandespelare.rad(vid: -1, i: rader) == nil, "före första raden hörs ingen")
         }
 
         do {   // nedräkning
@@ -1905,6 +1979,41 @@ enum Tester {
                                                modell: "ggml-large-v3.bin", språk: "en")
         Prov.lika(annan?.motor, .whisperCpp,
                   "en whisper.cpp-modell som inte är KB får köra engelska själv")
+
+        // Språkgissningen: motorerna lyssnar bara på filens första halvminut,
+        // och ett möte som spelats in innan någon talar har tystnad där.
+        // Uppmätt blev en timme norska «English» på sin första halvminut.
+        let block = Ljudbuffring.blocklängd
+        let perSekund = Int(Ljudbuffring.målfrekvens) / block
+        // Tolv sekunder tystnad, sedan fem sekunder tal.
+        var rms = [Float](repeating: 0.0002, count: 12 * perSekund)
+        rms += [Float](repeating: 0.05, count: 5 * perSekund)
+        let start = Arkivtranskribering.förstaTalet(blockRMS: rms)
+        Prov.kolla(start != nil, "talet hittas bortom tystnaden")
+        Prov.kolla((start ?? 99) >= 2 && (start ?? 0) <= 13,
+                   "och pekas ut strax före det, inte vid filens början — blev \(start ?? -1)")
+        Prov.lika(Arkivtranskribering.förstaTalet(
+                    blockRMS: [Float](repeating: 0.0002, count: 30 * perSekund)), nil,
+                  "ren tystnad ger ingen gissningspunkt")
+        // En dörr som slår igen är inte någon som talar.
+        var knäpp = [Float](repeating: 0.0002, count: 20 * perSekund)
+        for i in 0..<(perSekund / 4) { knäpp[10 * perSekund + i] = 0.05 }
+        Prov.lika(Arkivtranskribering.förstaTalet(blockRMS: knäpp), nil,
+                  "ett kort knäpp räknas inte som tal")
+
+        Prov.kolla(Whisper.ärTomtLjud("Teksting av Nicolai Winther"),
+                   "norsk textningssignatur räknas som tystnad")
+        Prov.kolla(Whisper.ärTomtLjud("Takk."), "ensamt «Takk.» är påhitt")
+        Prov.kolla(!Whisper.ärTomtLjud("Takk for at du tok deg tid"),
+                   "men ett riktigt tack lämnas i fred")
+
+        Prov.lika(MlxWhisper.kod("sv"), "sv", "språkkoden går rakt igenom")
+        Prov.lika(MlxWhisper.kod("Swedish"), "sv", "och namnet översätts till kod")
+        Prov.lika(MlxWhisper.kod("nb"), "no", "bokmål och nynorsk blir norska")
+        Prov.lika(MlxWhisper.kod(""), nil, "tomt svar är ingen gissning")
+        Prov.kolla(Mötesspråk.val.contains { $0.kod == "no" },
+                   "norska går att välja — annars är «avgör själv» enda vägen")
+        Prov.lika(Mötesspråk.namn(nil), "Avgör själv", "nil är «avgör själv»")
 
         Prov.kolla(!Transkriberingsval.lokalaModeller().isEmpty,
                    "modellistan hittar ggml-filerna")
@@ -2575,6 +2684,34 @@ extension Tester {
             Prov.lika(arkiv.projekt(för: ny).count, 0, "och finns inte i listan")
         }
 
+        do {   // ett namnbyte på kontakten följer med till röst, möten och tavla
+            let (arkiv, rot) = tillfälligt()
+            defer { try? fm.removeItem(at: rot) }
+            let kund = try! arkiv.skapaKund(namn: "Acme")
+            try! arkiv.läggTill(Kontakt(namn: "Kristin"), hos: kund)
+            try! arkiv.lärDigRöst(namn: "Kristin", avtryck: Avtryck(vektor: [1, 0], sekunder: 6), hos: kund)
+            try! arkiv.lärDigRöst(namn: "Kristin Sand Backen", avtryck: Avtryck(vektor: [0, 1], sekunder: 6), hos: kund)
+            let mapp = try! arkiv.nyInspelningsmapp(placering: .kund(kund), titel: "Möte", datum: Date())
+            try! arkiv.spara(Inspelning(titel: "Möte", inledd: Date(), längd: 5, kund: "Acme", projekt: nil,
+                                        mikrofon: nil, liveYttranden: [], arkivYttranden: nil,
+                                        röstnamn: [0: "Kristin", 1: "Greg"]), i: mapp)
+            try! arkiv.läggTill([Uppgift(vad: "Skicka underlaget", vem: "kristin")], för: kund)
+
+            var k = arkiv.kontakter(för: kund).first!
+            k.namn = "Kristin Sand Backen"
+            try! arkiv.uppdatera(k, hos: kund)
+
+            let profiler = arkiv.egnaRöstprofiler(för: kund)
+            Prov.lika(profiler.map(\.namn), ["Kristin Sand Backen"], "rösten byter namn och slås ihop med den som fanns")
+            Prov.lika(profiler.first?.avtryck.count, 2, "avtrycken från båda följer med")
+            Prov.lika(arkiv.inspelningar(för: kund).first?.0.röstnamn[0], "Kristin Sand Backen", "mötets röst byter namn")
+            Prov.lika(arkiv.inspelningar(för: kund).first?.0.röstnamn[1], "Greg", "andra röster rörs inte")
+            Prov.lika(arkiv.uppgifter(för: kund).first?.vem, "Kristin Sand Backen", "uppgiftens vem följer med, oavsett skiftläge")
+
+            try! arkiv.taBortRöst(namn: "Kristin Sand Backen", hos: kund)
+            Prov.lika(arkiv.egnaRöstprofiler(för: kund).count, 0, "en röst går att glömma")
+        }
+
         do {   // underprocesser: utdata läses till slut, tidsgränsen håller
             let sem = DispatchSemaphore(value: 0)
             nonisolated(unsafe) var ut = ""
@@ -2609,25 +2746,123 @@ extension Tester {
         let kontakter = [Kontakt(namn: "Anders Bjarby"), Kontakt(namn: "Andreas Lund"),
                          Kontakt(namn: "Kristin Berg")]
 
-        let röst = Kanbanvy.personer(i: "Röst 1 (Andreas)", kontakter: kontakter)
+        let röst = Personer.personer(i: "Röst 1 (Andreas)", kontakter: kontakter)
         Prov.lika(röst.map(\.namn), ["Andreas Lund"], "«Röst 1 (Andreas)» är kontakten Andreas Lund")
 
-        let hel = Kanbanvy.personer(i: "anders bjarby", kontakter: kontakter)
-        let kort = Kanbanvy.personer(i: "Anders", kontakter: kontakter)
+        let hel = Personer.personer(i: "anders bjarby", kontakter: kontakter)
+        let kort = Personer.personer(i: "Anders", kontakter: kontakter)
         Prov.lika(hel.first?.nyckel, kort.first?.nyckel, "«Anders» och «anders bjarby» är samma person")
         Prov.lika(kort.first?.namn, "Anders Bjarby", "och visas med kontaktens namn")
 
-        let två = Kanbanvy.personer(i: "Kristin och Anders", kontakter: kontakter)
+        let två = Personer.personer(i: "Kristin och Anders", kontakter: kontakter)
         Prov.lika(två.map(\.namn), ["Kristin Berg", "Anders Bjarby"], "«Kristin och Anders» är två personer")
 
-        Prov.lika(Kanbanvy.personer(i: nil, kontakter: kontakter).count, 0, "inget vem ger ingen person")
-        Prov.lika(Kanbanvy.personer(i: "null", kontakter: kontakter).count, 0, "«null» ger ingen person")
+        Prov.lika(Personer.personer(i: nil, kontakter: kontakter).count, 0, "inget vem ger ingen person")
+        Prov.lika(Personer.personer(i: "null", kontakter: kontakter).count, 0, "«null» ger ingen person")
 
         let tvetydiga = kontakter + [Kontakt(namn: "Anders Svensson")]
-        let a = Kanbanvy.personer(i: "Anders", kontakter: tvetydiga)
+        let a = Personer.personer(i: "Anders", kontakter: tvetydiga)
         Prov.lika(a.first?.namn, "Anders", "två kontakter med samma förnamn slås inte ihop")
 
-        let okänd = Kanbanvy.personer(i: "Greg", kontakter: kontakter)
+        let okänd = Personer.personer(i: "Greg", kontakter: kontakter)
         Prov.lika(okänd.first?.nyckel, "greg", "ett namn utan kontakt får sin egen nyckel")
+
+        // Röstavtrycken: omdömet följer trösklarna, och en profil lär sig
+        // inte samma avtryck två gånger.
+        Prov.lika(Tröskel.omdöme(likhet: 0.90, sekunder: 10), .igenkänd, "över namntröskeln: igenkänd")
+        Prov.lika(Tröskel.omdöme(likhet: 0.81, sekunder: 10), .trolig, "mellan trösklarna: trolig")
+        Prov.lika(Tröskel.omdöme(likhet: 0.40, sekunder: 10), .svag, "under: svag")
+        var profil = Röstprofil(namn: "Anna", avtryck: [Avtryck(vektor: [1, 0], sekunder: 6)])
+        profil.lärDig(Avtryck(vektor: [1, 0], sekunder: 7))
+        Prov.lika(profil.avtryck.count, 1, "samma avtryck igen tillför inget")
+        profil.lärDig(Avtryck(vektor: [0, 1], sekunder: 5))
+        Prov.lika(profil.avtryck.count, 2, "ett annat avtryck lärs in")
+        let sparad = try? JSONDecoder.kundkoll.decode(Inspelning.self, from: Data(
+            #"{"titel":"T","inledd":"2026-09-01T09:00:00Z","längd":5,"kund":"Acme","liveYttranden":[],"röstavtryck":{"0":{"vektor":[0.5,0.5],"sekunder":8}}}"#.utf8))
+        Prov.lika(sparad?.röstavtryck[0]?.sekunder, 8, "avtrycket per grupp läses ur möte.json")
+
+        // Sammanställningen räknar öppna kort per person, över flera kunder.
+        let rader: [(uppgift: Uppgift, kontakter: [Kontakt])] = [
+            (Uppgift(vad: "a", vem: "Anders"), kontakter),
+            (Uppgift(vad: "b", vem: "Röst 2 (Anders)"), kontakter),
+            (Uppgift(vad: "c", vem: "Kristin", läge: .klart), kontakter),
+            (Uppgift(vad: "d"), kontakter),
+            (Uppgift(vad: "e", vem: "Anders Bjarby"), []),
+        ]
+        let s = Personer.sammanställ(rader)
+        Prov.lika(s.personer.map(\.namn), ["Anders Bjarby"], "klara kort räknas inte, och samma person slås ihop")
+        Prov.lika(s.personer.first?.antal, 3, "tre öppna kort på Anders, även hos en kund utan kontakter")
+        Prov.lika(s.utanPerson, 1, "ett kort saknar person")
+        Prov.kolla(s.gäller("anders bjarby") && !s.gäller("greg"), "ett sparat val gäller bara den som har kort")
+        Prov.kolla(Personer.matchar(rader[1].uppgift, kontakter: kontakter, person: "anders bjarby"),
+                   "filtret träffar «Röst 2 (Anders)» via kontaktlistan")
+        Prov.kolla(Personer.matchar(rader[3].uppgift, kontakter: kontakter, person: Personer.utanPerson),
+                   "«Utan person» träffar kortet utan vem")
+    }
+}
+
+// MARK: - Tystnadsfiltret
+
+extension Tester {
+
+    /// Rader utan tal bakom sig kastas; rader med tal behålls — mätt mot
+    /// samma slags ljud som livebuffringen provas på.
+    static func tystnadsfiltret() {
+        Prov.svit("Tystnadsfiltret")
+        let fm = FileManager.default
+        let f = Ljudbuffring.målfrekvens
+
+        // 30 s: tystnad med svagt brus 0–10, pulserande tal 10–20, tystnad 20–30.
+        var prov = [Float](repeating: 0, count: Int(f) * 30)
+        var slump = UInt32(12345)
+        for i in prov.indices {
+            slump = slump &* 1_664_525 &+ 1_013_904_223
+            prov[i] = (Float(slump >> 8) / Float(1 << 24) - 0.5) * 0.001   // brusgolv
+        }
+        for i in (Int(f) * 10)..<(Int(f) * 20) {
+            let t = Double(i) / f
+            let stavelse = Int(t * 4) % 2 == 0          // fyra stavelser per sekund
+            if stavelse { prov[i] += 0.05 * Float(sin(2 * .pi * 180 * t)) }
+        }
+        let fil = fm.temporaryDirectory.appending(path: "kundkoll-test-\(UUID().uuidString).wav")
+        defer { try? fm.removeItem(at: fil) }
+        try! Wav.data(av: prov).write(to: fil)
+
+        let rms = Tystnadsfilter.blockRMS(i: fil)
+        Prov.lika(rms?.count, 1500, "en halv minut blir 1 500 block om 20 ms")
+
+        let rader = [
+            Yttrande(röst: .jag, text: "Tack till elever och personal vid Värmlande.", start: 2, slut: 4),
+            Yttrande(röst: .jag, text: "Vi kör igång med lagret.", start: 11, slut: 14),
+            Yttrande(röst: .jag, text: "Ja.", start: 17.5, slut: 18),
+            Yttrande(röst: .jag, text: "Textning av Kundkoll.", start: 24, slut: 27),
+        ]
+        let kvar = Tystnadsfilter.rensa(rader, ljud: fil)
+        Prov.lika(kvar.map(\.text), ["Vi kör igång med lagret.", "Ja."],
+                  "raderna i tystnad kastas, raderna i tal behålls — även en kort")
+
+        // Datorljud ligger tio till fyrtio gånger högre: samma prov, förstärkt.
+        let starkt = fm.temporaryDirectory.appending(path: "kundkoll-test-\(UUID().uuidString).wav")
+        defer { try? fm.removeItem(at: starkt) }
+        try! Wav.data(av: prov.map { $0 * 20 }).write(to: starkt)
+        Prov.lika(Tystnadsfilter.rensa(rader, ljud: starkt).count, 2,
+                  "måttet är relativt: samma utfall på ett tjugo gånger starkare spår")
+
+        // En fil som inte går att läsa lämnar raderna orörda.
+        let trasig = fm.temporaryDirectory.appending(path: "kundkoll-test-\(UUID().uuidString).wav")
+        defer { try? fm.removeItem(at: trasig) }
+        try! Data("inte en wav".utf8).write(to: trasig)
+        Prov.lika(Tystnadsfilter.rensa(rader, ljud: trasig).count, rader.count,
+                  "ett oläsligt ljud kastar inget")
+
+        // Fraserna whisper lärt sig ur textade filmer.
+        for t in ["Tack till elever och personal vid Värmlande.", "Textning av Elin Andersson",
+                  "Undertexter från Amara.org", "Tack för att ni tittade!"] {
+            Prov.kolla(Whisper.ärTomtLjud(t), "«\(t)» sorteras bort som påhitt")
+        }
+        for t in ["Tack till er alla för insatsen i förra veckan, det gick bra.",
+                  "Vi tackar för offerten och återkommer."] {
+            Prov.kolla(!Whisper.ärTomtLjud(t), "«\(t)» behålls")
+        }
     }
 }

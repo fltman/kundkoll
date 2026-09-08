@@ -20,14 +20,37 @@ struct Röstvy: View {
     @State private var grupperarOm = false
     @State private var omfel: String?
 
-    /// Namn att välja bland: kundens kontakter först, sedan röster som känns
-    /// igen men inte finns som kontakt.
-    private var förslag: [String] {
-        // De som var kallade till just det här mötet först: de är de troligaste.
-        var ut = inspelning.kallade
-        for k in kontakter where !ut.contains(k.namn) { ut.append(k.namn) }
-        for p in profiler where !ut.contains(p.namn) { ut.append(p.namn) }
+    /// Hur väl en röst liknar de kända, bäst först. Avtrycket sparas med
+    /// mötet; äldre möten saknar det tills de grupperas om.
+    private func likheter(_ grupp: Int) -> [(namn: String, likhet: Double, omdöme: Tröskel.Omdöme)] {
+        guard let a = inspelning.röstavtryck[grupp] else { return [] }
+        return profiler
+            .map { (namn: $0.namn, likhet: $0.likhet(a),
+                    omdöme: Tröskel.omdöme(likhet: $0.likhet(a), sekunder: a.sekunder)) }
+            .filter { $0.likhet >= 0.3 }
+            .sorted { $0.likhet > $1.likhet }
+    }
+
+    /// Namn att välja bland: kända röster efter likhet först, sedan de
+    /// kallade, kontakterna och övriga kända röster.
+    private func förslag(för grupp: Int) -> [(namn: String, etikett: String)] {
+        var ut: [(namn: String, etikett: String)] = []
+        for l in likheter(grupp) {
+            ut.append((l.namn, "\(l.namn) · \(Int((l.likhet * 100).rounded())) %"))
+        }
+        // De som var kallade till just det här mötet: de är de troligaste.
+        for n in inspelning.kallade where !ut.contains(where: { $0.namn == n }) { ut.append((n, n)) }
+        for k in kontakter where !ut.contains(where: { $0.namn == k.namn }) { ut.append((k.namn, k.namn)) }
+        for p in profiler where !ut.contains(where: { $0.namn == p.namn }) { ut.append((p.namn, p.namn)) }
         return ut
+    }
+
+    private func färg(_ omdöme: Tröskel.Omdöme) -> Color {
+        switch omdöme {
+        case .igenkänd: .green
+        case .trolig: .orange
+        case .svag: .secondary
+        }
     }
 
     private var grupper: [(grupp: Int, turer: Int, sekunder: Double, exempel: String)] {
@@ -98,6 +121,7 @@ struct Röstvy: View {
                     .foregroundStyle(.secondary)
                 Spacer()
                 Button("Avbryt") { stäng() }
+                    .accessibilityIdentifier("röster.avbryt")
                 Button("Spara", action: spara)
                     .keyboardShortcut(.defaultAction)
             }
@@ -119,8 +143,9 @@ struct Röstvy: View {
                 Text("\(g.turer) inlägg · \(formateraLängd(g.sekunder))")
                     .font(.caption).foregroundStyle(.secondary)
                 Spacer()
-                if inspelning.röstnamn[g.grupp] != nil {
-                    Text("igenkänd")
+                if let satt = inspelning.röstnamn[g.grupp] {
+                    let träff = likheter(g.grupp).first { $0.namn == satt }
+                    Text(träff.map { "igenkänd · \(Int(($0.likhet * 100).rounded())) %" } ?? "igenkänd")
                         .font(.caption)
                         .padding(.horizontal, 6).padding(.vertical, 2)
                         .background(.green.opacity(0.2), in: .capsule)
@@ -131,15 +156,48 @@ struct Röstvy: View {
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
+            // Likheten mot de kända rösterna, i procent. Grönt är över
+            // tröskeln för automatisk namngivning, orange är troligt men
+            // frågar hellre än gissar. Ett klick sätter namnet.
+            let liknar = likheter(g.grupp).prefix(4)
+            if !liknar.isEmpty {
+                HStack(spacing: 6) {
+                    Text("Liknar").font(.caption).foregroundStyle(.secondary)
+                    ForEach(Array(liknar), id: \.namn) { l in
+                        Button {
+                            namn[g.grupp] = l.namn
+                        } label: {
+                            HStack(spacing: 4) {
+                                Text(l.namn)
+                                Text("\(Int((l.likhet * 100).rounded())) %").monospacedDigit()
+                            }
+                            .font(.caption)
+                            .padding(.horizontal, 7).padding(.vertical, 3)
+                            .background(färg(l.omdöme).opacity(0.13), in: .capsule)
+                            .foregroundStyle(färg(l.omdöme))
+                        }
+                        .buttonStyle(.plain)
+                        .help(l.omdöme == .igenkänd ? "Över tröskeln för igenkänning — klicka för att sätta namnet"
+                              : l.omdöme == .trolig ? "Trolig, men under tröskeln — klicka om det stämmer"
+                              : "Svag likhet")
+                    }
+                }
+            } else if inspelning.röstavtryck[g.grupp] == nil {
+                Text("Inget avtryck sparat för rösten — gruppera om för att få likheter.")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+            }
+
             HStack(spacing: 8) {
                 TextField("Namn", text: Binding(
                     get: { namn[g.grupp] ?? "" },
                     set: { namn[g.grupp] = $0.isEmpty ? nil : $0 }))
                     .textFieldStyle(.roundedBorder)
-                if !förslag.isEmpty {
+                let alternativ = förslag(för: g.grupp)
+                if !alternativ.isEmpty {
                     Menu("Välj") {
-                        ForEach(förslag, id: \.self) { n in
-                            Button(n) { namn[g.grupp] = n }
+                        ForEach(alternativ, id: \.namn) { a in
+                            Button(a.etikett) { namn[g.grupp] = a.namn }
                         }
                     }
                     .fixedSize()

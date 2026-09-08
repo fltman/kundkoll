@@ -533,6 +533,10 @@ extension Röstanalys {
         /// en trasig Pythonmiljö gav namnlösa röster i varje möte utan att
         /// någon sa varför.
         var varning: String?
+        /// Det bästa avtrycket per grupp — det längsta. Sparas med mötet, så
+        /// att «Vem är vem» kan säga hur väl varje röst liknar de kända utan
+        /// att köra Python igen, och så att ett satt namn kan läras in direkt.
+        var avtryck: [Int: Avtryck] = [:]
     }
 
     /// Delar upp motpartsspåret i röster och sätter namn på dem som känns igen.
@@ -592,8 +596,10 @@ extension Röstanalys {
 
         var märkta = motpart
         var namn: [Int: String] = [:]
+        var avtryckPerGrupp: [Int: Avtryck] = [:]
         for (g, grupp) in grupper.enumerated() {
             if let n = grupp.namn { namn[g] = n }
+            if let b = grupp.bästa { avtryckPerGrupp[g] = b }
             for tur in grupp.turer {
                 for (i, y) in märkta.enumerated()
                 where y.start >= tur.start - 0.01 && y.slut <= tur.slut + 0.01 {
@@ -603,7 +609,8 @@ extension Röstanalys {
         }
         return Uppdelning(yttranden: (mina + märkta).sorted { $0.start < $1.start },
                           namn: namn, metod: metod,
-                          varning: varningar.isEmpty ? nil : varningar.joined(separator: " "))
+                          varning: varningar.isEmpty ? nil : varningar.joined(separator: " "),
+                          avtryck: avtryckPerGrupp)
     }
 
     /// Lär in avtryck för de röster som har namn, så att personerna känns
@@ -619,6 +626,16 @@ extension Röstanalys {
         }
         var misslyckade: [String] = []
         for (grupp, personnamn) in inspelning.röstnamn {
+            // Avtrycket från uppdelningen finns oftast sparat med mötet; då
+            // behövs ingen Python alls.
+            if let sparat = inspelning.röstavtryck[grupp],
+               sparat.sekunder >= Tröskel.minstaProfilLängd {
+                let lyckades = await MainActor.run {
+                    (try? arkiv.lärDigRöst(namn: personnamn, avtryck: sparat, hos: kund)) != nil
+                }
+                if !lyckades { misslyckade.append(personnamn) }
+                continue
+            }
             let rader = inspelning.yttranden.filter { $0.röstgrupp == grupp }
             let turer = Self.turer(av: rader)
             guard let par = try? await avtryck(fil: fil, turer: turer),

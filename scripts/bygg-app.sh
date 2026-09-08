@@ -1,10 +1,10 @@
 #!/bin/bash
-# Bygger Kundkoll.app. Xcode behövs inte — Command Line Tools räcker.
+# Bygger Bjarbys kundkoll.app. Xcode behövs inte — Command Line Tools räcker.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 KONFIG="${1:-release}"
-APP="dist/Kundkoll.app"
+APP="dist/Bjarbys kundkoll.app"
 # Eget certifikat: KUNDKOLL_SIGNERING="Developer ID Application: Ditt AB (XXXXXXXXXX)"
 IDENTITET="${KUNDKOLL_SIGNERING:-Developer ID Application: Brattoo AB (V783A2L763)}"
 

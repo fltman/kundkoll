@@ -75,6 +75,7 @@ struct Kontaktredigering: View {
                 adressboksknapp
                 Spacer()
                 Button("Avbryt") { stäng() }
+                    .accessibilityIdentifier("kontakt.avbryt")
                 Button("Spara", action: spara)
                     .keyboardShortcut(.defaultAction)
                     .disabled(kontakt.namn.trimmingCharacters(in: .whitespaces).isEmpty)

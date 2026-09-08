@@ -147,6 +147,9 @@ struct Inspelning: Codable, Identifiable, Hashable {
     /// Sådant röstanalysen vill säga — att avtrycken inte gick att läsa,
     /// eller att reservmetoden fick användas.
     var röstvarning: String?
+    /// Det bästa röstavtrycket per grupp på motpartsspåret. Gör att «Vem är
+    /// vem» kan jämföra mot kända röster och lära in ett namn utan Python.
+    var röstavtryck: [Int: Avtryck] = [:]
     var efterbearbetad: Bool { arkivYttranden != nil }
     /// Passet avbröts — appen stängdes eller föll mitt i.
     var avbruten: Bool { bearbetas }
@@ -162,7 +165,8 @@ struct Inspelning: Codable, Identifiable, Hashable {
          sammanfattning: Mötessammanfattning? = nil,
          bearbetas: Bool = false, arkivfel: String? = nil,
          sammanfattningsfel: String? = nil,
-         röstmetod: String? = nil, röstvarning: String? = nil) {
+         röstmetod: String? = nil, röstvarning: String? = nil,
+         röstavtryck: [Int: Avtryck] = [:]) {
         self.id = id
         self.titel = titel
         self.inledd = inledd
@@ -183,6 +187,7 @@ struct Inspelning: Codable, Identifiable, Hashable {
         self.sammanfattningsfel = sammanfattningsfel
         self.röstmetod = röstmetod
         self.röstvarning = röstvarning
+        self.röstavtryck = röstavtryck
     }
 
     init(from avkodare: Decoder) throws {
@@ -207,5 +212,6 @@ struct Inspelning: Codable, Identifiable, Hashable {
         sammanfattningsfel = try c.decodeIfPresent(String.self, forKey: .sammanfattningsfel)
         röstmetod = try c.decodeIfPresent(String.self, forKey: .röstmetod)
         röstvarning = try c.decodeIfPresent(String.self, forKey: .röstvarning)
+        röstavtryck = try c.decodeIfPresent([Int: Avtryck].self, forKey: .röstavtryck) ?? [:]
     }
 }

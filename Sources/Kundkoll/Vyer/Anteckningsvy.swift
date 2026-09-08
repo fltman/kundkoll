@@ -81,6 +81,7 @@ struct Anteckningsvy: View {
                 }
                 Spacer()
                 Button("Klar") { spara(); stäng() }
+                    .accessibilityIdentifier("anteckning.klar")
                     .keyboardShortcut(.defaultAction)
             }
             .padding(16)

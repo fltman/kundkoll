@@ -60,6 +60,10 @@ final class Ljudinfångning: NSObject {
     // MARK: - Kör
 
     func starta(mikrofonID: String?) async throws {
+        // Nolltiden hör till strömmen. Buffertar som redan låg i kön när
+        // förra strömmen stoppades hinner sätta den efter `stoppa()`, och då
+        // skulle nästa möte räkna sina tider från förra mötets slut.
+        nolltid = nil
         let innehåll = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
         guard let skärm = innehåll.displays.first else { throw Fel.ingenSkärm }
 

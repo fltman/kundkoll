@@ -140,6 +140,29 @@ final class Kalendern: ObservableObject {
             .contains { värd.hasSuffix($0) }
     }
 
+    /// "om 20 minuter", "i dag 14:00", "på torsdag" — närmare till hands än
+    /// ett datum när allt som visas ligger framåt.
+    nonisolated static func närText(_ start: Date) -> String {
+        let kalender = Calendar.current
+        let om = start.timeIntervalSinceNow
+        if om < 3600 {
+            return "om \(max(1, Int(om / 60))) minuter"
+        }
+        if kalender.isDateInToday(start) {
+            return "i dag \(DateFormatter.timme.string(from: start))"
+        }
+        if kalender.isDateInTomorrow(start) {
+            return "i morgon \(DateFormatter.timme.string(from: start))"
+        }
+        if om < 7 * 24 * 3600 {
+            let f = DateFormatter()
+            f.locale = Locale(identifier: "sv_SE")
+            f.dateFormat = "EEEE HH:mm"
+            return f.string(from: start)
+        }
+        return DateFormatter.klocka.string(from: start)
+    }
+
     /// Vilka möten hör till kunden?
     ///
     /// Ett möte räknas som kundens om någon deltagare finns bland kundens

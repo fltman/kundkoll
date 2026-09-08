@@ -220,77 +220,43 @@ struct Kundinnehåll: View {
             } else {
             VStack(spacing: 0) {
                 ForEach(Array(möten.prefix(5).enumerated()), id: \.offset) { i, m in
-                    HStack(spacing: 12) {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(m.titel)
-                            HStack(spacing: 6) {
-                                Text(m.pågår ? "pågår nu" : närText(m.start))
-                                let andra = m.deltagare.filter { !$0.ärJag }
-                                if !andra.isEmpty {
-                                    Text("· \(andra.map(\.namn).prefix(3).joined(separator: ", "))")
-                                        .lineLimit(1)
-                                }
-                            }
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        }
-                        Spacer()
-                        if m.pågår {
-                            Märke(text: "pågår", färg: .red)
-                        }
-                        if !projekt.isEmpty {
-                            // Vilket projekt mötet hör till kan ingen regel
-                            // gissa; det väljs här och följer med inspelningen.
-                            Menu {
-                                Button("Inget projekt") { koppla(m, till: nil) }
-                                ForEach(projekt) { p in
-                                    Button(p.namn) { koppla(m, till: p.namn) }
-                                }
-                                Divider()
-                                Button("Hör inte till \(kund.namn)", role: .destructive) {
-                                    try? arkiv.taBortMöteskoppling(m.id, för: kund)
-                                    läsOm()
-                                    Task { await hämtaMöten() }
-                                }
-                            } label: {
-                                Label({ let p = möteskopplingar[m.id]
-                                        return (p?.isEmpty == false) ? p! : "Projekt" }(),
-                                      systemImage: "folder")
-                                    .font(.caption)
-                            }
-                            .menuStyle(.borderlessButton)
-                            .fixedSize()
-                            .foregroundStyle(möteskopplingar[m.id] == nil
-                                             ? Color.secondary : Color.accentColor)
-                            .help("Välj vilket projekt mötet hör till")
-                        }
-                        if let länk = m.möteslänk {
-                            Button { NSWorkspace.shared.open(länk) } label: {
-                                Image(systemName: "video")
-                            }
-                            .buttonStyle(.borderless)
-                            .help("Öppna mötet")
-                        }
-                        Button("Förbered") { briefing = m }
-                            .buttonStyle(.borderless)
-                            .help("Senaste mötet, öppna åtaganden och nya mejl — läsningen inför mötet")
-                        Button("Spela in") {
-                            // Mötet bär titel, deltagare och sitt valda
-                            // projekt. Mikrofonen är den som användes sist.
-                            Inspelningsfönster.öppna(kund: kund,
-                                                     projekt: kopplatProjekt(m),
-                                                     möte: m)
-                        }
-                        .buttonStyle(.borderless)
-                        .disabled(session.pågår)
+                    Mötesrad(möte: m, kund: kund, projekt: kopplatProjekt(m),
+                             förbered: { briefing = $0 }) {
+                        if !projekt.isEmpty { projektmeny(m) }
                     }
-                    .padding(.horizontal, 12).padding(.vertical, 9)
                     if i < min(5, möten.count) - 1 { Divider() }
                 }
             }
             .kort(hörn: Stil.radhörn)
             }
         }
+    }
+
+    /// Vilket projekt mötet hör till kan ingen regel gissa; det väljs här
+    /// och följer med inspelningen.
+    private func projektmeny(_ m: Kalendern.Möte) -> some View {
+        Menu {
+            Button("Inget projekt") { koppla(m, till: nil) }
+            ForEach(projekt) { p in
+                Button(p.namn) { koppla(m, till: p.namn) }
+            }
+            Divider()
+            Button("Hör inte till \(kund.namn)", role: .destructive) {
+                try? arkiv.taBortMöteskoppling(m.id, för: kund)
+                läsOm()
+                Task { await hämtaMöten() }
+            }
+        } label: {
+            Label({ let p = möteskopplingar[m.id]
+                    return (p?.isEmpty == false) ? p! : "Projekt" }(),
+                  systemImage: "folder")
+                .font(.caption)
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .foregroundStyle(möteskopplingar[m.id] == nil
+                         ? Color.secondary : Color.accentColor)
+        .help("Välj vilket projekt mötet hör till")
     }
 
     private func koppla(_ m: Kalendern.Möte, till projektnamn: String?) {
@@ -300,29 +266,6 @@ struct Kundinnehåll: View {
 
     private func kopplatProjekt(_ m: Kalendern.Möte) -> Projekt? {
         möteskopplingar[m.id].flatMap { namn in projekt.first { $0.namn == namn } }
-    }
-
-    /// "om 20 minuter", "i dag 14:00", "på torsdag" — närmare till hands än
-    /// ett datum när allt som visas ligger framåt.
-    private func närText(_ start: Date) -> String {
-        let kalender = Calendar.current
-        let om = start.timeIntervalSinceNow
-        if om < 3600 {
-            return "om \(max(1, Int(om / 60))) minuter"
-        }
-        if kalender.isDateInToday(start) {
-            return "i dag \(DateFormatter.timme.string(from: start))"
-        }
-        if kalender.isDateInTomorrow(start) {
-            return "i morgon \(DateFormatter.timme.string(from: start))"
-        }
-        if om < 7 * 24 * 3600 {
-            let f = DateFormatter()
-            f.locale = Locale(identifier: "sv_SE")
-            f.dateFormat = "EEEE HH:mm"
-            return f.string(from: start)
-        }
-        return DateFormatter.klocka.string(from: start)
     }
 
     private var projektavsnitt: some View {
@@ -412,14 +355,18 @@ struct Kundinnehåll: View {
                         Spacer()
                         if kö.gäller(rad.mapp) {
                             ProgressView().controlSize(.small)
-                            Text(kö.aktuell?.mapp == rad.mapp ? kö.steg : "I kö …")
+                            Text(kö.aktuellMapp == rad.mapp ? kö.steg : "I kö …")
                                 .font(.caption).foregroundStyle(.secondary)
                         } else {
                             // Språket väljs här: en import som föll på fel
                             // språk ska inte behöva göras om från början.
                             Menu("Gör klart") {
-                                Button("På svenska") { görKlart(rad.mapp, språk: "sv") }
-                                Button("På engelska") { görKlart(rad.mapp, språk: "en") }
+                                ForEach(Mötesspråk.val, id: \.kod) { s in
+                                    Button("På \(s.namn.lowercased())") {
+                                        görKlart(rad.mapp, språk: s.kod)
+                                    }
+                                }
+                                Divider()
                                 Button("Låt motorn avgöra") { görKlart(rad.mapp, språk: nil) }
                             }
                             .fixedSize()
@@ -575,7 +522,10 @@ struct Kundinnehåll: View {
             HStack {
                 Avsnittsrubrik(rubrik)
                 Spacer()
-                if let knapp { Button(knapp.0, action: knapp.1).buttonStyle(.link) }
+                if let knapp {
+                    Button(knapp.0, action: knapp.1).buttonStyle(.link)
+                        .accessibilityIdentifier("avsnitt.\(knapp.0)")
+                }
             }
             innehåll()
         }
@@ -912,7 +862,7 @@ struct Inspelningslista: View {
                 return "Transkriberar \(Int(session.efterbearbetningsandel * 100)) % …"
             }
         }
-        if kö.aktuell?.mapp == mapp {
+        if kö.aktuellMapp == mapp {
             return kö.andel.map { "\(kö.steg) \(Int($0 * 100)) % …" } ?? "\(kö.steg) …"
         }
         if kö.väntande.contains(where: { $0.mapp == mapp }) { return "I kö …" }
@@ -939,8 +889,12 @@ struct Inspelningslista: View {
 /// Kalenderposter utan deltagarlista och utan kundnamn i titeln — vanligt
 /// när en inbjudan vidarebefordrats eller skrivits in för hand — kan ingen
 /// regel para ihop med en kund. Här tas de i anspråk med ett klick.
+///
+/// Öppnad från ett projekt kopplas mötet dit direkt, och då räknas även
+/// kundens egna möten som ännu inte hör till projektet.
 struct Mötesplockare: View {
     let kund: Kund
+    var projekt: Projekt?
     var vidVal: () -> Void
 
     @EnvironmentObject private var arkiv: Arkivet
@@ -952,7 +906,7 @@ struct Mötesplockare: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                Text("Lägg till möte hos \(kund.namn)").font(.headline)
+                Text("Lägg till möte i \(projekt?.namn ?? kund.namn)").font(.headline)
                 Spacer()
             }
             .padding(16)
@@ -960,7 +914,9 @@ struct Mötesplockare: View {
 
             if kandidater.isEmpty {
                 TomtLäge(ikon: "calendar", rubrik: "Inga fler möten",
-                         text: "Alla kommande möten i kalendern hör redan till någon kund.")
+                         text: projekt == nil
+                            ? "Alla kommande möten i kalendern hör redan till någon kund."
+                            : "Alla kundens kommande möten hör redan till projektet, och inga andra är lediga.")
                     .frame(maxHeight: .infinity)
             } else {
                 ScrollView {
@@ -975,7 +931,7 @@ struct Mötesplockare: View {
                                 }
                                 Spacer()
                                 Button("Lägg till") {
-                                    try? arkiv.kopplaMöte(m.id, till: nil, för: kund)
+                                    try? arkiv.kopplaMöte(m.id, till: projekt?.namn, för: kund)
                                     vidVal()
                                     stäng()
                                 }
@@ -998,19 +954,29 @@ struct Mötesplockare: View {
         .onAppear(perform: läsIn)
     }
 
-    /// Alla kommande möten som inte redan hör till någon kund.
+    /// Alla kommande möten som inte redan hör till någon kund — och, från
+    /// ett projekt, kundens egna möten som inte hör till just det projektet.
     private func läsIn() {
         // En kalenderfråga, inte en per kund.
         let alla = kalender.möten()
         var tagna = Set<String>()
+        var kundens = Set<String>()
         for k in arkiv.kunder {
             let kontakter = arkiv.kontakter(för: k)
             let kopplade = arkiv.möteskopplingar(för: k)
             for m in alla
             where kopplade[m.id] != nil || Kalendern.hör(m, till: k, kontakter: kontakter) {
                 tagna.insert(m.id)
+                if k == kund { kundens.insert(m.id) }
             }
         }
-        kandidater = alla.filter { !tagna.contains($0.id) }
+        let egna = arkiv.möteskopplingar(för: kund)
+        kandidater = alla.filter { m in
+            if let projekt {
+                return !tagna.contains(m.id)
+                    || (kundens.contains(m.id) && egna[m.id] != projekt.namn)
+            }
+            return !tagna.contains(m.id)
+        }
     }
 }

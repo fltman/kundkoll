@@ -1,0 +1,91 @@
+<section class="hjälte">
+  <div>
+    <img class="ikon" src="bilder/ikon.png" alt="">
+    <h1>Kundkoll, utan att något lämnar datorn.</h1>
+    <p class="ingress">Spelar in möten och telefonsamtal, skriver ut vad som sades, vad som beslutades och vad någon lovade — per kund och projekt, lokalt på din Mac.</p>
+    <div class="knappar">
+      <a class="knapp" href="ladda-ner.html">Ladda ner för macOS</a>
+      <a class="knapp sekundär" href="manual.html">Läs manualen</a>
+    </div>
+    <p class="liten">Version VERSION · macOS 26 · Apple Silicon · gratis, öppen källkod</p>
+  </div>
+  <figure class="skärm"><img src="bilder/oversikt.png" alt="Kundens översikt: kommande möten, projekt, kontakter och de senaste inspelningarna" width="1400"></figure>
+</section>
+
+<!-- VIDEO-START -->
+<section class="video">
+  <video controls preload="metadata" poster="bilder/produktvideo-affisch.jpg" width="1920" height="1080">
+    <source src="video/produktvideo.mp4" type="video/mp4">
+  </video>
+  <p class="liten">En kvart om hur appen används, från inspelning till chatt, berättat av Anders. Ljud på.</p>
+</section>
+<!-- VIDEO-SLUT -->
+
+<div class="punkter">
+  <div class="punkt"><h3>Lokal transkribering</h3><p>KB-Whisper, Kungliga bibliotekets svenska modell, körs på datorn. Live under mötet, i arkivkvalitet efteråt.</p></div>
+  <div class="punkt"><h3>Vem sa vad</h3><p>Din mikrofon och datorljudet spelas in som två spår. Motpartens röster delas upp och känns igen nästa gång.</p></div>
+  <div class="punkt"><h3>Åtaganden på en tavla</h3><p>Det som lovades i mötet och i mejlen blir kort, med riktiga datum. Min vecka samlar allt hos alla kunder.</p></div>
+  <div class="punkt"><h3>Fråga om kunden</h3><p>En chatt som svarar ur kundens eget material och hänvisar till var det står — och säger ifrån när det inte finns.</p></div>
+</div>
+
+<section class="avsnitt">
+  <div class="text">
+    <h2>Efter mötet: tre saker, inte fyrahundra rader</h2>
+    <p>Ett fyrtio minuter långt samtal blir hundratals rader transkript. Det man behöver är vad det handlade om, vad som beslutades och vad någon lovade — och det skrivs automatiskt när efterbearbetningen är klar.</p>
+    <p>Transkriptet finns kvar bredvid, med en spelare: mötet rullar och raden som hörs markeras. Transkriptet är whispers ord, ljudet är facit.</p>
+  </div>
+  <figure class="skärm"><img src="bilder/mote-transkript.png" alt="Mötesvyn med transkriptet, spelaren och chatten om mötet" width="1400"></figure>
+</section>
+
+<section class="avsnitt spegel">
+  <div class="text">
+    <h2>Tavlan skriver sig själv</h2>
+    <p>Åtaganden ur mötena och mejlen blir kort i tre spalter, med den som ska göra det och ett riktigt datum: «före fredag» sagt en onsdag blir fredagens datum. Det som passerats rödmarkeras.</p>
+    <p>Filtrera på person, se vad som väntar på kunden, och låt <em>Min vecka</em> samla det öppna hos alla kunder, försenat först.</p>
+  </div>
+  <figure class="skärm"><img src="bilder/tavla.png" alt="Att göra-tavlan med tre spalter och personfilter" width="1400"></figure>
+</section>
+
+<section class="avsnitt">
+  <div class="text">
+    <h2>Vem är vem, utan att gissa</h2>
+    <p>Sitter flera personer i mötet delas motpartsspåret upp per röst. Personer kunden är känd för sedan tidigare känns igen på röstavtrycket, och för resten visas hur väl rösten liknar de kända — i procent, med tröskeln utsatt.</p>
+    <p>Osäkra röster lämnas namnlösa hellre än att få fel namn. Ett namn du sätter lärs in och känns igen nästa gång.</p>
+  </div>
+  <figure class="skärm"><img src="bilder/vem-ar-vem.png" alt="Vem är vem: rösterna på motpartsspåret med likhet mot kända röster" width="1400"></figure>
+</section>
+
+<section class="avsnitt spegel">
+  <div class="text">
+    <h2>Inför mötet: läs på, på en minut</h2>
+    <p>En kvart före varje kundmöte kommer en notis. Klicket öppnar briefen: förra mötet i samma serie, obesvarade frågor, öppna åtaganden och mejlen sedan sist. Byggd ur det som redan finns, ingen väntan.</p>
+    <p>Projektöversikten inleds med <em>Läget just nu</em>, en lägesbild skriven ur möten, tavla, mejl och anteckningar.</p>
+  </div>
+  <figure class="skärm"><img src="bilder/projekt.png" alt="Projektöversikten med lägesbilden" width="1400"></figure>
+</section>
+
+<section class="avsnitt">
+  <div class="text">
+    <h2>Fråga om det som sagts och skrivits</h2>
+    <p>Varje kund och projekt har en chatt som svarar ur transkript, anteckningar, mejl med bilagornas innehåll och kontakter. Svaren hänvisar till underlaget, och modellen säger ifrån i stället för att hitta på.</p>
+    <p>Sökningen förstår svenska böjningar och betydelse: «leverans» hittar «leveranstiden», och en svensk fråga hittar ett engelskt avtal.</p>
+  </div>
+  <figure class="skärm"><img src="bilder/chatt.png" alt="Chattpanelen med ett svar och dess källor" width="1400"></figure>
+</section>
+
+<section class="lokalt">
+  <h2>Vad som lämnar datorn, och vad som inte gör det</h2>
+  <p>Ljudet och transkriberingen stannar alltid på din Mac. Röstanalysen körs lokalt. Sökindexet ligger i kundens egen mapp.</p>
+  <p>Chatten, sammanfattningarna och lägesbilderna använder en språkmodell som du väljer själv: OpenRouter, Anthropic, OpenAI, Azure — eller en lokal modell via Ollama, LM Studio eller MLX. Med en lokal modell lämnar ingenting datorn. Med en molnmodell står det i klartext i inställningarna vad som skickas, och de automatiska anropen går att stänga av.</p>
+  <p>Allt sparas som vanliga filer i en Obsidian-vault per kund under <code>~/Documents/Kunder</code>. Ingen databas, inget konto, ingen inloggning.</p>
+</section>
+
+<section>
+  <h2>Öppen källkod, byggd av en konsult för konsulter</h2>
+  <p class="dämpad">Bjarbys kundkoll är gratis och öppen under MIT-licens. Den är skriven av <a href="https://anders.bjarby.com">Anders Bjarby</a> för det egna kundarbetet, och varje val i den är uppmätt på riktiga möten — vilken modell som hör svenska bäst, hur röster känns igen, hur whispers påhitt hålls borta. Vill du stödja utvecklingen finns <a href="https://www.patreon.com/AndersBjarby">Patreon</a>.</p>
+  <div class="knappar">
+    <a class="knapp" href="ladda-ner.html">Ladda ner</a>
+    <a class="knapp patreon" href="https://www.patreon.com/AndersBjarby">Stöd projektet</a>
+    <a class="knapp sekundär" href="https://github.com/fltman/kundkoll">Källkoden</a>
+  </div>
+</section>

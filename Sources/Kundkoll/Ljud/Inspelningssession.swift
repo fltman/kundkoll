@@ -62,8 +62,10 @@ final class Inspelningssession: ObservableObject {
     private(set) var placering: Placering?
     private var mikrofonNamn: String?
     private var kallade: [String] = []
-    /// Mötets språk: "sv" eller "en". Livefönstren och arkivpasset följer det.
-    private var språk = "sv"
+    /// Mötets språk: "sv", "en" eller nil för att låta motorn avgöra —
+    /// ett möte på svenska och norska har inget ett språk. Livefönstren
+    /// och arkivpasset följer det.
+    private var språk: String? = "sv"
     private var start = Date()
     private var klocka: Timer?
     /// En transkribering i taget per spår, annars hamnar raderna i oordning.
@@ -75,7 +77,7 @@ final class Inspelningssession: ObservableObject {
 
     func starta(placering: Placering, titel: String,
                 mikrofon: Ljudinfångning.Mikrofon?, kallade: [String] = [],
-                språk: String = "sv") async {
+                språk: String? = "sv") async {
         // Efter ett fel, eller ett färdigt möte som lämnats kvar, ska nästa
         // «Spela in» fungera — tidigare krävdes en omstart av appen.
         switch läge {
@@ -94,7 +96,7 @@ final class Inspelningssession: ObservableObject {
         do {
             läge = .förbereder("Kontrollerar behörigheter …")
             guard await Ljudinfångning.begärMikrofon() else {
-                throw Enkeltfel("Kundkoll behöver tillgång till mikrofonen. Ge den i Systeminställningar → Integritet och säkerhet → Mikrofon.")
+                throw Enkeltfel("\(Appnamn.visat) behöver tillgång till mikrofonen. Ge den i Systeminställningar → Integritet och säkerhet → Mikrofon.")
             }
             guard await Ljudinfångning.harSkärmbehörighet() else {
                 throw Enkeltfel("Datorljudet kräver behörigheten Skärminspelning. Ge den i Systeminställningar → Integritet och säkerhet → Skärminspelning och starta om appen.")
@@ -113,6 +115,10 @@ final class Inspelningssession: ObservableObject {
                 .motpart: try Spårskrivare(fil: m.appending(path: "motpart.wav")),
             ]
 
+            // Buffringen lever hela appstarten och räknar tiderna ur sina
+            // matade prov. Utan en nollställning här ärver mötet föregående
+            // mötes längd som sin nolltid.
+            for (_, b) in buffring { b.nollställ() }
             infångning.vidRam = { [weak self] ram in self?.tog(ram) }
             infångning.vidFel = { [weak self] fel in self?.avbröt(fel) }
             try await infångning.starta(mikrofonID: mikrofon?.id)
@@ -159,7 +165,8 @@ final class Inspelningssession: ObservableObject {
             guard let self else { return }
             let text: String
             do {
-                text = try await self.whisper.transkribera(prov: f.prov, språk: self.språk)
+                // «auto» får whisper-server att avgöra språket per fönster.
+                text = try await self.whisper.transkribera(prov: f.prov, språk: self.språk ?? "auto")
             } catch {
                 // Servern kan ha dött mitt i mötet. Utan det här försvann
                 // varje fönster i tysthet och livepanelen bara tystnade.

@@ -38,6 +38,11 @@ final class Importkö: ObservableObject {
     }
 
     @Published private(set) var aktuell: Jobb?
+    /// Mappen det pågående jobbet arbetar i. För omkörningar och
+    /// slutföranden är den känd redan vid köandet; för en import blir den
+    /// känd först när importen skapat den, och fram tills dess syntes
+    /// inspelningen inte som upptagen.
+    @Published private(set) var aktuellMapp: URL?
     @Published private(set) var väntande: [Jobb] = []
     @Published private(set) var steg = ""
     @Published private(set) var andel: Double?
@@ -51,7 +56,7 @@ final class Importkö: ObservableObject {
 
     /// Om mappen just nu bearbetas eller väntar på det.
     func gäller(_ mapp: URL) -> Bool {
-        aktuell?.mapp == mapp || väntande.contains { $0.mapp == mapp }
+        aktuellMapp == mapp || väntande.contains { $0.mapp == mapp }
     }
 
     func köa(källa: URL, placering: Placering, titel: String,
@@ -98,6 +103,7 @@ final class Importkö: ObservableObject {
         guard aktuell == nil, !väntande.isEmpty else { return }
         let j = väntande.removeFirst()
         aktuell = j
+        aktuellMapp = j.mapp
         steg = "Förbereder"
         andel = nil
         sparaUndan()
@@ -117,7 +123,9 @@ final class Importkö: ObservableObject {
                 case .importera(let källa):
                     _ = try await Import().importera(
                         källa, placering: j.placering, titel: j.titel,
-                        kund: j.kund, profiler: profiler, språk: j.språk, vidLäge: vidLäge)
+                        kund: j.kund, profiler: profiler, språk: j.språk,
+                        vidMapp: { m in Task { @MainActor in self.aktuellMapp = m } },
+                        vidLäge: vidLäge)
                 case .efterbearbeta(let i):
                     guard let mapp = j.mapp else { break }
                     let klar = try await Efterbearbetning.kör(
@@ -138,6 +146,7 @@ final class Importkö: ObservableObject {
                 fel = "\(j.titel): \(error.localizedDescription)"
             }
             aktuell = nil
+            aktuellMapp = nil
             jobb = nil
             sparaUndan()
             kör()

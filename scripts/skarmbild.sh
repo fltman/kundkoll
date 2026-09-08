@@ -1,5 +1,5 @@
 #!/bin/bash
-# Tar en skärmbild av Kundkoll och skriver ut sökvägen.
+# Tar en skärmbild av Bjarbys kundkoll och skriver ut sökvägen.
 #
 #   scripts/skarmbild.sh            # appfönstret
 #   scripts/skarmbild.sh --starta   # startar om appen först
@@ -16,14 +16,14 @@ UT="${TMPDIR:-/tmp}/kundkoll-skarmbild.png"
 FORSOK="${FORSOK:-12}"
 
 if [ "${1:-}" = "--starta" ]; then
-    pkill -f "dist/Kundkoll" 2>/dev/null
+    pkill -f "dist/Bjarbys kundkoll" 2>/dev/null
     sleep 1
-    open dist/Kundkoll.app
+    open "dist/Bjarbys kundkoll.app"
     sleep 3
 fi
 
 # Lyft fram fönstret. Absolut sökväg, annars kan open hitta en annan kopia.
-open -a "$(pwd)/dist/Kundkoll.app" 2>/dev/null
+open -a "$(pwd)/dist/Bjarbys kundkoll.app" 2>/dev/null
 sleep 1.5
 
 hitta_id() {
@@ -34,7 +34,7 @@ hitta_id() {
     ' >/dev/null 2>&1
     # Fönster-ID via CoreGraphics-listan, samma väg som skärmbildsskillen
     /Users/andersbj/.claude/skills/screenshot/scripts/list_windows.sh 2>/dev/null \
-        | awk -F'\t' '$2 == "Kundkoll" {print $1; exit}'
+        | awk -F'\t' '$2 == "Kundkoll" || $2 == "Bjarbys kundkoll" {print $1; exit}'
 }
 
 for ((i = 1; i <= FORSOK; i++)); do

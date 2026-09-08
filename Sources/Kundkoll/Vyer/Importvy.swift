@@ -81,13 +81,14 @@ struct Importvy: View {
                     ForEach(projekt) { p in Text(p.namn).tag(Projekt?.some(p)) }
                 }
                 Picker("Språk", selection: $språk) {
-                    Text("Svenska").tag(String?.some("sv"))
-                    Text("Engelska").tag(String?.some("en"))
+                    ForEach(Mötesspråk.val, id: \.kod) { s in
+                        Text(s.namn).tag(String?.some(s.kod))
+                    }
                     Text("Avgör själv").tag(String?.none)
                 }
-                .help("KB-Whisper är svensktrimmad och översätter engelska till "
-                      + "svenska — för engelska möten tar transkriberingen vägen "
-                      + "via MLX eller den valda molnmotorn.")
+                .help("KB-Whisper är svensktrimmad och översätter andra språk till "
+                      + "svenska — för dem tar transkriberingen vägen via MLX "
+                      + "eller den valda molnmotorn.")
             }
             .formStyle(.grouped)
 
@@ -100,6 +101,7 @@ struct Importvy: View {
             Spacer()
             HStack {
                 Button("Avbryt") { stäng() }
+                    .accessibilityIdentifier("import.avbryt")
                 Spacer()
                 Button(Importkö.delad.pågår ? "Lägg i kön" : "Lägg till", action: kör)
                     .keyboardShortcut(.defaultAction)

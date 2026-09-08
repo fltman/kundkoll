@@ -23,20 +23,23 @@ final class Ljudbuffring {
     private static let block = 320
 
     /// Hur många gånger starkare än bakgrunden ett block måste vara för att
-    /// räknas som tal.
-    private let talfaktor: Float = 4
+    /// räknas som tal. Måtten delas med `Tystnadsfilter`, som mäter
+    /// arkivpassets rader mot samma ljud.
+    static let talfaktor: Float = 4
     /// Lägsta bakgrund som skattningen får landa på. Utan den skulle digital
     /// tystnad (bakgrund 0) göra minsta knäpp till tal.
-    private let lägstaGolv: Float = 0.0005
+    static let lägstaGolv: Float = 0.0005
     /// Så mycket tal måste ett fönster innehålla för att vara värt att skicka.
     /// Utan den här spärren får whisper rena tystnadsfönster och hittar på
     /// text — uppmätt blir fem sekunder tystnad "Tack."
-    private let minstaTal: Double = 0.25
+    static let minstaTal: Double = 0.25
     /// Bakgrunden skattas som en låg percentil av de senaste sekunderna.
     /// Percentilen ligger lågt för att pauserna mellan orden, inte orden,
     /// ska bestämma nivån.
-    private let golvfönster: Double = 20
-    private let golvpercentil = 0.10
+    static let golvfönster: Double = 20
+    static let golvpercentil = 0.10
+    /// Blocket som ljudet vägs i.
+    static var blocklängd: Int { block }
 
     private let tystnadslängd: Double = 0.6       // s tystnad som stänger fönstret
     private let minLängd: Double = 1.2            // kortare fönster är inte värt att skicka
@@ -89,6 +92,30 @@ final class Ljudbuffring {
         return (mono, stäng())
     }
 
+    /// Glömmer allt och börjar om från noll.
+    ///
+    /// Buffringen lever lika länge som inspelningssessionen, alltså hela
+    /// appstarten, medan tiderna räknas ur `matadeProv` — antalet prov sedan
+    /// strömmens början. Utan den här nollställningen fortsatte räkningen
+    /// mellan möten: uppmätt fick ett möte som spelades in efter ett annat
+    /// på 1782 sekunder alla sina livetider 1782 sekunder för sent, bortom
+    /// slutet på sitt eget ljud, och varje klick i livetranskriptet hamnade
+    /// på fel ställe.
+    func nollställ() {
+        prov.removeAll()
+        väntande.removeAll()
+        historik.removeAll()
+        nolltid = nil
+        matadeProv = 0
+        vägdaProv = 0
+        fönsterStartProv = nil
+        talProv = 0
+        tystSedanProv = nil
+        senasteNivå = 0
+        konverterare = nil
+        källformat = nil
+    }
+
     /// Stänger det som ligger kvar när inspelningen slutar.
     func spola() -> Fönster? {
         guard Double(prov.count) / Self.målfrekvens >= 0.4 else {
@@ -107,7 +134,7 @@ final class Ljudbuffring {
         }
         guard let start = fönsterStartProv, !prov.isEmpty else { return nil }
         // Ett fönster utan tal är just det whisper hittar på text ur.
-        guard Double(talProv) / Self.målfrekvens >= minstaTal else { return nil }
+        guard Double(talProv) / Self.målfrekvens >= Self.minstaTal else { return nil }
         return Fönster(prov: prov, start: tid(start), slut: tid(start + prov.count))
     }
 
@@ -131,11 +158,11 @@ final class Ljudbuffring {
             // blinkar den i stavelsetakt i stället för att visa en nivå.
             senasteNivå = max(mätarnivå(nivå), senasteNivå * 0.93)
             historik.append(nivå)
-            let maxHistorik = Int(golvfönster * Self.målfrekvens) / Self.block
+            let maxHistorik = Int(Self.golvfönster * Self.målfrekvens) / Self.block
             if historik.count > maxHistorik { historik.removeFirst() }
 
             vägdaProv += antal
-            if nivå >= golv() * talfaktor {
+            if nivå >= golv() * Self.talfaktor {
                 talProv += antal
                 tystSedanProv = nil
             } else if tystSedanProv == nil {
@@ -151,10 +178,10 @@ final class Ljudbuffring {
     /// och en inspelning som börjar mitt i en mening hittar sitt golv i
     /// första pausen mellan orden.
     private func golv() -> Float {
-        guard !historik.isEmpty else { return lägstaGolv }
+        guard !historik.isEmpty else { return Self.lägstaGolv }
         let sorterad = historik.sorted()
-        let i = min(sorterad.count - 1, Int(Double(sorterad.count) * golvpercentil))
-        return max(lägstaGolv, sorterad[i])
+        let i = min(sorterad.count - 1, Int(Double(sorterad.count) * Self.golvpercentil))
+        return max(Self.lägstaGolv, sorterad[i])
     }
 
     /// Aktuell ljudnivå 0–1, för mätaren i gränssnittet.
@@ -241,6 +268,23 @@ enum Wav {
         guard let storlek = try? FileManager.default
             .attributesOfItem(atPath: fil.path)[.size] as? Int else { return 0 }
         return Double(max(0, storlek - huvudlängd)) / (frekvens * 2)
+    }
+
+    /// Ett stycke ur ljudet som flyttalsprov: från `från` sekunder och
+    /// `sekunder` framåt. Tom lista om filen inte går att läsa eller stycket
+    /// ligger bortom slutet.
+    static func prov(ur fil: URL, från: Double, sekunder: Double,
+                     frekvens: Double = Ljudbuffring.målfrekvens) -> [Float] {
+        guard let handtag = try? FileHandle(forReadingFrom: fil) else { return [] }
+        defer { try? handtag.close() }
+        let start = UInt64(huvudlängd) + UInt64(max(0, från) * frekvens) * 2
+        guard (try? handtag.seek(toOffset: start)) != nil,
+              let data = try? handtag.read(upToCount: Int(max(0, sekunder) * frekvens) * 2),
+              data.count >= 2
+        else { return [] }
+        return data.withUnsafeBytes { råa in
+            råa.bindMemory(to: Int16.self).map { Float(Int16(littleEndian: $0)) / 32767 }
+        }
     }
 
     /// Rättar längderna i huvudet så att de stämmer med filens storlek.

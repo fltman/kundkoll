@@ -5,3 +5,15 @@ dist/
 vault/
 data/
 .swiftpm/
+
+# Arkivkopian av produktvideon byggs av scripts/bygg-produktvideo.py och
+# väger 200 MB — över GitHubs gräns. Affischen är liten och följer med.
+docs/produktvideo.mp4
+
+# Produktsidan: sidorna byggs av scripts/bygg-site.sh ur site/_*.html.
+site/*.html
+!site/_*.html
+site/bilder/*
+!site/bilder/ikon.png
+site/nedladdning/
+site/video/

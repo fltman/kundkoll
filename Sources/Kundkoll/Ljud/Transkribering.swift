@@ -123,6 +123,25 @@ struct Transkriberingsval: Codable {
     }
 }
 
+/// Språken ett möte kan sättas till. nil är «avgör själv».
+///
+/// Norska och danska finns med för att kunderna finns där. Utan dem blev
+/// «avgör själv» det enda valet för ett norskt möte — och avgörandet föll
+/// på engelska, som översätter i stället för att skriva av.
+enum Mötesspråk {
+    static let val: [(kod: String, namn: String)] = [
+        ("sv", "Svenska"),
+        ("no", "Norska"),
+        ("da", "Danska"),
+        ("en", "Engelska"),
+    ]
+
+    static func namn(_ kod: String?) -> String {
+        guard let kod else { return "Avgör själv" }
+        return val.first { $0.kod == kod }?.namn ?? kod
+    }
+}
+
 /// Arkivtranskriberingen: en ingång, fyra motorer.
 enum Arkivtranskribering {
 
@@ -138,24 +157,34 @@ enum Arkivtranskribering {
                             + "(pip install mlx-whisper i transcriber-venven) "
                             + "eller en molnmotor — välj under ⌘,.")
         }
+        // «Avgör själv» avgörs här, på en bit där någon talar. Vägvalet görs
+        // ändå på användarens val, inte på gissningen: ett möte på svenska
+        // och norska ska inte hamna hos den svensktrimmade modellen bara för
+        // att gissningen råkade landa på svenska.
+        var körsSpråk = språk
+        if körsSpråk == nil, väg.motor.lokal { körsSpråk = await gissaSpråk(fil: fil) }
+        let rader: [Yttrande]
         switch väg.motor {
         case .whisperCpp:
-            return try await Whisper.delad.arkivtranskribera(
-                fil: fil, röst: röst, modell: väg.modell, språk: språk,
+            rader = try await Whisper.delad.arkivtranskribera(
+                fil: fil, röst: röst, modell: väg.modell, språk: körsSpråk,
                 totalLängd: totalLängd, vidFramsteg: vidFramsteg)
         case .mlx:
-            return try await MlxWhisper.transkribera(
-                fil: fil, röst: röst, modell: väg.modell, språk: språk,
+            rader = try await MlxWhisper.transkribera(
+                fil: fil, röst: röst, modell: väg.modell, språk: körsSpråk,
                 totalLängd: totalLängd, vidFramsteg: vidFramsteg)
         case .openai:
-            return try await Molntranskribering.openai(
+            rader = try await Molntranskribering.openai(
                 fil: fil, röst: röst, modell: väg.modell, språk: språk,
                 vidFramsteg: vidFramsteg)
         case .elevenlabs:
-            return try await Molntranskribering.scribe(
+            rader = try await Molntranskribering.scribe(
                 fil: fil, röst: röst, modell: väg.modell, språk: språk,
                 vidFramsteg: vidFramsteg)
         }
+        // Text är text, oavsett var den kom ifrån: rader utan tal bakom sig
+        // kastas för alla motorer. MLX och molnen har ingen egen VAD.
+        return Tystnadsfilter.rensa(rader, ljud: fil)
     }
 
     /// Vart ett språk får ta vägen.
@@ -174,6 +203,54 @@ enum Arkivtranskribering {
             return nil
         }
         return (.mlx, Transkriberingsmotor.mlx.standardmodell)
+    }
+
+    /// Gissar mötets språk ur ljudet, för «avgör själv».
+    ///
+    /// Motorerna avgör språket ur filens första trettio sekunder. Ett möte
+    /// spelas nästan alltid in innan någon börjat tala, och tystnad kan bli
+    /// vilket språk som helst: uppmätt gav en timmes norskt möte «English» på
+    /// sin första halvminut — tio minuter tyst väntrum — och hela timmen
+    /// översattes till engelska i stället för att skrivas av. Samma modell på
+    /// en bit med tal i svarade rätt. Därför gissas språket där någon talar.
+    ///
+    /// Ger nil när gissningen inte går att göra; då avgör motorn som förr.
+    static func gissaSpråk(fil: URL) async -> String? {
+        guard let start = förstaTalet(i: fil) else { return nil }
+        let prov = Wav.prov(ur: fil, från: start, sekunder: 90)
+        guard prov.count >= Int(Ljudbuffring.målfrekvens * 5) else { return nil }
+        let bit = FileManager.default.temporaryDirectory
+            .appending(path: "kundkoll-språk-\(UUID().uuidString).wav")
+        defer { try? FileManager.default.removeItem(at: bit) }
+        guard (try? Wav.data(av: prov).write(to: bit)) != nil else { return nil }
+        return await MlxWhisper.språk(i: bit)
+    }
+
+    /// Var i ljudet någon börjar tala, i sekunder. nil om ingenstans.
+    ///
+    /// Ett enstaka block kan vara en dörr som slår igen eller ett tangentslag.
+    /// Först när en tiosekundersruta bär två sekunder tal är det någon som
+    /// talar, och då pekas rutans början ut.
+    static func förstaTalet(i fil: URL) -> Double? {
+        guard let rms = Tystnadsfilter.blockRMS(i: fil) else { return nil }
+        return förstaTalet(blockRMS: rms)
+    }
+
+    /// Utbruten för att kunna provas utan en fil.
+    static func förstaTalet(blockRMS rms: [Float], ruta: Double = 10, krav: Double = 2) -> Double? {
+        let tal = Tystnadsfilter.talblock(rms)
+        let blockSekunder = Double(Ljudbuffring.blocklängd) / Ljudbuffring.målfrekvens
+        let rutblock = max(1, Int(ruta / blockSekunder))
+        let kravblock = max(1, Int(krav / blockSekunder))
+        var summa = 0
+        for i in 0..<tal.count {
+            if tal[i] { summa += 1 }
+            if i >= rutblock, tal[i - rutblock] { summa -= 1 }
+            if summa >= kravblock {
+                return max(0, Double(i - rutblock) * blockSekunder)
+            }
+        }
+        return nil
     }
 
     /// Vad som saknas för att det valda ska kunna köra. Tomt är gott.
@@ -269,6 +346,50 @@ enum MlxWhisper {
             throw Enkeltfel("mlx_whisper lämnade ingen utdata.")
         }
         return tolka(data, röst: röst)
+    }
+
+    /// Vilket språk mlx_whisper hör i en kort bit ljud — koden ur JSON:ens
+    /// `language`, eller nil om passet inte gick igenom. Bara en gissning:
+    /// den som faller tyst låter motorn avgöra som förr.
+    static func språk(i fil: URL) async -> String? {
+        guard FileManager.default.isExecutableFile(atPath: körbar.path) else { return nil }
+        let ut = FileManager.default.temporaryDirectory
+            .appending(path: "kundkoll-mlx-\(UUID().uuidString)")
+        guard (try? FileManager.default.createDirectory(at: ut, withIntermediateDirectories: true)) != nil
+        else { return nil }
+        defer { try? FileManager.default.removeItem(at: ut) }
+
+        let p = Process()
+        p.executableURL = körbar
+        p.arguments = [fil.path,
+                       "--model", Transkriberingsmotor.mlx.standardmodell,
+                       "--output-dir", ut.path,
+                       "--output-format", "json",
+                       "--condition-on-previous-text", "False"]
+        p.standardOutput = FileHandle.nullDevice
+        p.standardError = FileHandle.nullDevice
+        guard (try? await Underprocess.väntaIn(p, namn: "mlx_whisper", tidsgräns: 300)) != nil
+        else { return nil }
+
+        struct Fil: Decodable { let language: String? }
+        let json = ut.appending(path: fil.deletingPathExtension().lastPathComponent + ".json")
+        guard let data = try? Data(contentsOf: json),
+              let hörd = try? JSONDecoder().decode(Fil.self, from: data).language
+        else { return nil }
+        return kod(hörd)
+    }
+
+    /// mlx_whisper svarar med koden ("sv"), men äldre versioner med namnet
+    /// ("Swedish"). Båda ska bli en kod motorerna känner igen.
+    static func kod(_ svar: String) -> String? {
+        let s = svar.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !s.isEmpty else { return nil }
+        let namn = ["swedish": "sv", "norwegian": "no", "nynorsk": "no",
+                    "danish": "da", "english": "en"]
+        if let k = namn[s] { return k }
+        // Whisper skiljer på bokmål och nynorsk; motorerna vill ha "no".
+        if s == "nb" || s == "nn" { return "no" }
+        return s.count <= 3 ? s : nil
     }
 
     /// mlx_whispers JSON: segments[].start/end i sekunder.

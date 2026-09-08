@@ -68,6 +68,9 @@ struct Röstprofil: Codable, Hashable, Identifiable {
     /// Lägger till ett avtryck och gallrar de svagaste, så att profilen inte
     /// växer i all oändlighet.
     mutating func lärDig(_ nytt: Avtryck, tak: Int = 8) {
+        // Samma avtryck en gång till — efter en omkörning av samma möte —
+        // tillför inget och skulle tränga ut de andra.
+        guard !avtryck.contains(where: { $0.likhet(nytt) > 0.999 }) else { return }
         avtryck.append(nytt)
         if avtryck.count > tak {
             avtryck.sort { $0.sekunder > $1.sekunder }
@@ -136,6 +139,19 @@ enum Tröskel {
     /// Under det är det troligen en person till.
     nonisolated(unsafe) static var tilldela: Double =
         ProcessInfo.processInfo.environment["KUNDKOLL_TILLDELA"].flatMap(Double.init) ?? 0.25
+
+    /// Vad en likhet betyder, med hänsyn till hur långt ljudet är. Det är
+    /// samma trösklar som namngivningen använder — «igenkänd» sätts
+    /// automatiskt, «trolig» föreslås men frågar.
+    enum Omdöme: String {
+        case igenkänd, trolig, svag
+    }
+
+    static func omdöme(likhet: Double, sekunder: Double) -> Omdöme {
+        if likhet >= namnge(sekunder: sekunder) { return .igenkänd }
+        if likhet >= samma(sekunder: sekunder) { return .trolig }
+        return .svag
+    }
 
     /// Kortare än så här är ett avtryck inte värt att spara.
     static let minstaTurLängd: Double = 1.5

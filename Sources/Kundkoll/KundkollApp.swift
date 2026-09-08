@@ -22,7 +22,9 @@ struct Ingång {
             let sem = DispatchSemaphore(value: 0)
             nonisolated(unsafe) var kod: Int32 = 1
             Task.detached {
-                kod = await Transkriberingsprov.kör(fil: a[i + 1], motor: motor, modell: modell)
+                let språk = i + 4 < a.count ? (a[i + 4] == "auto" ? nil : a[i + 4]) : "sv"
+                kod = await Transkriberingsprov.kör(fil: a[i + 1], motor: motor,
+                                                    modell: modell, språk: språk)
                 sem.signal()
             }
             sem.wait()
@@ -282,6 +284,11 @@ struct Kundkoll: App {
         }
         .windowToolbarStyle(.unified)
         .commands {
+            CommandGroup(replacing: .appInfo) {
+                Button("Om \(Appnamn.visat)") {
+                    NotificationCenter.default.post(name: .visaOm, object: nil)
+                }
+            }
             CommandGroup(replacing: .newItem) {
                 Button("Ny kund …") { NotificationCenter.default.post(name: .nyKund, object: nil) }
                     .keyboardShortcut("n", modifiers: [.command, .shift])
@@ -307,6 +314,7 @@ extension Notification.Name {
     static let visaNyckel = Notification.Name("kundkoll.visaNyckel")
     static let sök = Notification.Name("kundkoll.sök")
     static let palett = Notification.Name("kundkoll.palett")
+    static let visaOm = Notification.Name("kundkoll.visaOm")
     /// Skickas när ett notisklick vill öppna en kund; objektet är kundnamnet
     /// och userInfo kan bära mötets id för en briefing.
     static let öppnaKund = Notification.Name("kundkoll.öppnaKund")

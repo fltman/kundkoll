@@ -1,0 +1,40 @@
+<h1>Vanliga frågor</h1>
+
+<details open><summary>Lämnar något datorn?</summary>
+<p>Ljudet, transkriberingen och röstanalysen: aldrig. Chatten, sammanfattningen efter mötet, uppgiftsletningen i mejl, lägesbilden och insikterna under samtal använder den språkmodell du valt. Med en lokal modell lämnar ingenting datorn. Med en molnmodell skickas transkript och mejltexter dit, och det står i klartext i inställningarna — de automatiska anropen går att stänga av, så att inget skickas förrän du ber om det. Två undantag som också står i klartext: molnmotorerna för transkribering skickar ljudet, och kopplade mappar genomsöks av Claude Code.</p></details>
+
+<details><summary>Varför KB-Whisper och inte Apples egen taligenkänning?</summary>
+<p>Apples SpeechTranscriber saknar svenska. DictationTranscriber har svenska men ingen interpunktion och är svag på egennamn. KB-Whisper medium fick allt rätt på samma ljud där large-v3-turbo skrev «britta ner». Mätningarna står i källkodens <code>docs/VERIFIERAD-STACK.md</code>.</p></details>
+
+<details><summary>Fungerar det på en Intel-Mac?</summary>
+<p>Nej. Appen kräver macOS 26 och Apple Silicon, för Metal i whisper.cpp och MLX.</p></details>
+
+<details><summary>Kan jag spela in engelska möten? Norska?</summary>
+<p>Ja. Språket väljs per möte: svenska, engelska eller «avgör själv» för möten på flera språk. KB-Whisper är svensktrimmad och översätter andra språk till svenska, så andra språk än svenska tar arkivvägen via MLX, som hittar språket självt, eller via en molnmotor. Livetranskriptet under mötet är alltid lokalt.</p></details>
+
+<details><summary>Var ligger mina data?</summary>
+<p>Under <code>~/Documents/Kunder</code>, en mapp per kund som också är ett Obsidian-valv. Ljudet ligger som wav, transkriptet som markdown, uppgifterna som json med en markdownkopia. Filsystemet är sanningen: en kund som skapas i Finder dyker upp i appen, och en kund som tas bort i appen hamnar i papperskorgen.</p></details>
+
+<details><summary>Whisper skrev något som ingen sa. Varför?</summary>
+<p>Whisper hittar på text ur tystnad, framför allt på det egna spåret där man är tyst större delen av mötet. Appen har fyra lager mot det: fönster utan tal skickas aldrig, Silero-VAD i whisper.cpp, ett filter på fraser och loopar, och en mätning av varje rad mot ljudet i arkivpasset. Slinker något ändå igenom går mötet att köra om med högerklick, och spelknappen på raden avslöjar det direkt.</p></details>
+
+<details><summary>Ett möte står som «live» eller «avbruten». Vad gör jag?</summary>
+<p>«Live» betyder att arkivpasset inte hunnit köra, «avbruten» att appen stängdes mitt i, «fel» att det föll — orsaken står i verktygstipset. Högerklicka på mötet och välj <em>Efterbearbeta igen</em>. Mötet behåller sitt id, så chattar och uppgifter följer med.</p></details>
+
+<details><summary>Måste jag ha Ollama?</summary>
+<p>Nej. Utan Ollama saknas insikterna under samtal och sökningen går på ord i stället för betydelse. Allt annat fungerar.</p></details>
+
+<details><summary>Kan jag använda den utan att betala för en molnmodell?</summary>
+<p>Ja. Välj en lokal modell under ⌘, — Ollama, LM Studio eller MLX talar alla OpenAI-formatet. Kvaliteten på sammanfattningarna följer modellen.</p></details>
+
+<details><summary>Hur känns en röst igen?</summary>
+<p>Varje röst får ett avtryck, en 192-dimensionell vektor från ECAPA-TDNN. Avtrycken sparas per kund, aldrig globalt, och jämförs med tröskelvärden som beror på hur långt ljudet är. Är likheten över tröskeln sätts namnet automatiskt; är den strax under visas den som trolig och du avgör. Ett namn du sätter lärs in.</p></details>
+
+<details><summary>Varför kräver appen Skärminspelning?</summary>
+<p>Datorljudet — motparten i Teams eller Zoom — fångas med ScreenCaptureKit, som kräver den behörigheten även när bara ljud används. Appen fångar minsta möjliga bildyta och kastar rutorna; ingen bild sparas.</p></details>
+
+<details><summary>Går det att ta bort allt igen?</summary>
+<p>Ja. Kunder, projekt, möten och anteckningar går till papperskorgen från appen. Nycklarna ligger i nyckelringen under tjänsten <code>com.brattoo.kundkoll</code>. Inställningarna ligger i appens UserDefaults. Inget skapas någon annanstans.</p></details>
+
+<details><summary>Hur bidrar jag?</summary>
+<p>Källkoden ligger på <a href="https://github.com/fltman/kundkoll">GitHub</a> under MIT. Varje mätning bakom ett val står i <code>docs/</code>, och provsviten körs med <code>Kundkoll --test</code>. Vill du stödja arbetet finns <a href="https://www.patreon.com/AndersBjarby">Patreon</a>.</p></details>

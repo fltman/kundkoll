@@ -26,6 +26,8 @@ struct Transkriptvy: View {
     @EnvironmentObject private var session: Inspelningssession
     @StateObject private var spelare = Yttrandespelare()
     @State private var hovrad: UUID?
+    /// Tiden man drar mot i spelaren, tills fingret släpper.
+    @State private var dragTid: Double?
     /// Närmast föregående möte i samma serie, när det finns ett.
     @State private var förra: (Inspelning, URL)?
     /// Åtaganden från förra mötet som fortfarande är öppna.
@@ -75,7 +77,9 @@ struct Transkriptvy: View {
                         Text(fel).font(.caption).foregroundStyle(.red).lineLimit(2)
                     }
                     Spacer()
-                    Button("Stäng") { stäng() }.keyboardShortcut(.defaultAction)
+                    Button("Stäng") { stäng() }
+                        .keyboardShortcut(.defaultAction)
+                        .accessibilityIdentifier("möte.stäng")
                 }
                 .padding(16)
             }
@@ -90,7 +94,10 @@ struct Transkriptvy: View {
             }
         }
         .frame(height: 660)
-        .onAppear(perform: läsUppgifter)
+        .onAppear {
+            läsUppgifter()
+            spelare.ladda(mapp: mapp, inspelning: inspelning)
+        }
         .onDisappear { spelare.sluta() }
         // En omkörning i bakgrunden skriver möte.json; vyn ska följa med.
         .onChange(of: arkiv.sparningar) { läsOmFrånDisk() }
@@ -131,6 +138,8 @@ struct Transkriptvy: View {
                 } label: {
                     Label("Vem är vem", systemImage: "person.wave.2")
                 }
+                .help("Dela upp rösterna på motpartsspåret och sätt namn")
+                .accessibilityIdentifier("möte.vem-är-vem")
             }
             if Obsidian.finns {
                 Button {
@@ -150,8 +159,10 @@ struct Transkriptvy: View {
             // finns kvar, så allt går att köra om — även för möten som
             // spelats in i appen, med båda spåren.
             Menu {
-                Button("Transkribera om på svenska") { transkriberaOm("sv") }
-                Button("Transkribera om på engelska") { transkriberaOm("en") }
+                ForEach(Mötesspråk.val, id: \.kod) { s in
+                    Button("Transkribera om på \(s.namn.lowercased())") { transkriberaOm(s.kod) }
+                }
+                Divider()
                 Button("Transkribera om — avgör själv") { transkriberaOm(nil) }
             } label: {
                 Image(systemName: "arrow.trianglehead.2.clockwise")
@@ -250,10 +261,10 @@ struct Transkriptvy: View {
 
     /// Byter till ett annat möte i samma vy — bläddring i serien.
     private func visa(_ annat: (Inspelning, URL)) {
-        spelare.sluta()
         inspelning = annat.0
         mapp = annat.1
         läsUppgifter()
+        spelare.ladda(mapp: mapp, inspelning: inspelning)
     }
 
     private var saknasSammanfattning: some View {
@@ -284,45 +295,102 @@ struct Transkriptvy: View {
     }
 
     private var transkriptflik: some View {
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: 12) {
-                ForEach(inspelning.yttranden) { y in
-                    VStack(alignment: .leading, spacing: 3) {
-                        HStack(spacing: 6) {
-                            Text(y.etikett(inspelning.röstnamn, enspårig: inspelning.enspårig))
-                                .font(.caption.weight(.medium))
-                                .foregroundStyle(färg(y))
-                            Text(y.tidsstämpel)
-                                .font(.caption.monospacedDigit())
-                                .foregroundStyle(.tertiary)
-                            // Transkriptet är whispers ord; ljudet är facit.
-                            Button {
-                                spelare.växla(y, i: mapp, enspårig: inspelning.enspårig)
-                            } label: {
-                                Image(systemName: spelare.spelar == y.id
-                                      ? "stop.fill" : "play.fill")
-                                    .font(.system(size: 9))
-                            }
-                            .buttonStyle(.plain)
-                            .foregroundStyle(spelare.spelar == y.id
-                                             ? Color.accentColor : Color.secondary)
-                            .opacity(spelare.spelar == y.id || hovrad == y.id ? 1 : 0)
-                            .help("Hör vad som faktiskt sades")
+        VStack(spacing: 0) {
+            ScrollViewReader { rulle in
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 12) {
+                        ForEach(inspelning.yttranden) { y in
+                            transkriptrad(y).id(y.id)
                         }
-                        Text(y.text)
-                            .textSelection(.enabled)
-                            .fixedSize(horizontal: false, vertical: true)
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(6)
-                    .background(spelare.spelar == y.id
-                                ? Color.accentColor.opacity(0.08) : Color.clear,
-                                in: .rect(cornerRadius: 6))
-                    .onHover { över in hovrad = över ? y.id : (hovrad == y.id ? nil : hovrad) }
+                    .padding(14)
+                }
+                // Raden som hörs ska synas — men bara medan ljudet spelar,
+                // så att den som rullar själv inte rycks tillbaka.
+                .onChange(of: spelare.aktuell) {
+                    if spelare.igång, let id = spelare.aktuell {
+                        withAnimation { rulle.scrollTo(id, anchor: .center) }
+                    }
                 }
             }
-            .padding(14)
+            Divider()
+            spelarrad
         }
+    }
+
+    private func transkriptrad(_ y: Yttrande) -> some View {
+        let hörs = spelare.aktuell == y.id
+        return VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 6) {
+                Text(y.etikett(inspelning.röstnamn, enspårig: inspelning.enspårig))
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(färg(y))
+                Text(y.tidsstämpel)
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.tertiary)
+                // Transkriptet är whispers ord; ljudet är facit. Knappen
+                // spelar härifrån och vidare, i stället för bara raden.
+                Button {
+                    spelare.växla(y)
+                } label: {
+                    Image(systemName: hörs && spelare.igång ? "pause.fill" : "play.fill")
+                        .font(.system(size: 9))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(hörs ? Color.accentColor : Color.secondary)
+                .opacity(hörs || hovrad == y.id ? 1 : 0)
+                .help(hörs && spelare.igång ? "Pausa" : "Spela upp härifrån")
+            }
+            Text(y.text)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(6)
+        .background(hörs ? Color.accentColor.opacity(0.10) : Color.clear,
+                    in: .rect(cornerRadius: 6))
+        .onHover { över in hovrad = över ? y.id : (hovrad == y.id ? nil : hovrad) }
+    }
+
+    /// Spelaren längst ned i transkriptfliken: spela, pausa, dra i tiden.
+    private var spelarrad: some View {
+        HStack(spacing: 12) {
+            Button {
+                spelare.växla()
+            } label: {
+                Image(systemName: spelare.igång ? "pause.fill" : "play.fill")
+                    .font(.title3)
+                    .frame(width: 22)
+            }
+            .buttonStyle(.plain)
+            .disabled(!spelare.harLjud)
+            .help(spelare.igång ? "Pausa" : "Spela upp mötet")
+            Text(formateraLängd(dragTid ?? spelare.tid))
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(.secondary)
+                .frame(width: 56, alignment: .trailing)
+            Slider(value: Binding(get: { dragTid ?? spelare.tid },
+                                  set: { dragTid = $0 }),
+                   in: 0...max(1, spelare.längd)) { drar in
+                // Hoppet görs när fingret släpper, inte för varje pixel.
+                if !drar, let t = dragTid {
+                    spelare.hoppa(till: t)
+                    dragTid = nil
+                }
+            }
+            .disabled(!spelare.harLjud)
+            Text(formateraLängd(spelare.längd))
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(.secondary)
+                .frame(width: 56, alignment: .leading)
+            if !spelare.harLjud {
+                Text("Ljudet saknas i mappen")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
     }
 
     private var uppgiftsflik: some View {
@@ -468,7 +536,7 @@ struct Transkriptvy: View {
 
     /// Var en omkörning av det här mötet står, om en pågår.
     private var körOmSteg: String? {
-        if kö.aktuell?.mapp == mapp {
+        if kö.aktuellMapp == mapp {
             return kö.andel.map { "\(kö.steg) · \(Int($0 * 100)) %" } ?? kö.steg
         }
         if kö.väntande.contains(where: { $0.mapp == mapp }) { return "I kö …" }
@@ -503,6 +571,9 @@ struct Transkriptvy: View {
               ny.id == inspelning.id, ny != inspelning else { return }
         inspelning = ny
         läsUppgifter()
+        // Nya rader efter en omkörning: spelaren ska peka på dem, inte de
+        // gamla. Mitt i en uppspelning får den vänta.
+        if !spelare.igång { spelare.ladda(mapp: mapp, inspelning: inspelning) }
     }
 
     private func sammanfatta() async {

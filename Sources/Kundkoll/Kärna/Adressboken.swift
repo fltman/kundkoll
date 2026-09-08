@@ -128,7 +128,7 @@ final class Adressboken: ObservableObject {
         var errorDescription: String? {
             switch self {
             case .ingenTillgång:
-                "Kundkoll har inte tillgång till Kontakter. Ge tillgång i Systeminställningar → Integritet och säkerhet → Kontakter."
+                "\(Appnamn.visat) har inte tillgång till Kontakter. Ge tillgång i Systeminställningar → Integritet och säkerhet → Kontakter."
             case .ingenPost:
                 "Posten finns inte kvar i Kontakter. Den kan ha raderats."
             }

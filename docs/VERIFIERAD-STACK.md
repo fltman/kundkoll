@@ -129,7 +129,15 @@ Tre lager skyddar mot det, i den ordningen:
    whisper.cpp-uppsättningen.
 3. **Filter på det som ändå slinker igenom.** Några stående fraser whisper
    lägger i munnen på tystnad, och en loopdetektor: samma ord fyra gånger i rad,
-   eller ett fåtal unika ord utspridda över en lång text.
+   eller ett fåtal unika ord utspridda över en lång text. Även inledningar
+   ur textade filmer: «Tack till elever och personal vid …», «Textning av …»
+   — den första kom ur ett riktigt möte, på det egna spåret, i tystnad.
+4. **Varje rad mäts mot ljudet** i arkivpasset (`Tystnadsfilter`). MLX och
+   molnmotorerna har ingen taldetektering alls, och dit går engelska möten
+   och «avgör själv». En rad vars tidsrymd, med 0,3 s marginal, inte
+   innehåller tal — block fyra gånger över rummets bakgrund, samma mått som
+   livebuffringen — kastas oavsett motor. Provat på syntetiskt ljud med brus,
+   pulserande tal och tystnad, på två nivåer som skiljer tjugo gånger.
 
 Validerat åt båda hållen på en fil med 12 s tystnad + 8 s tal + 10 s svagt brus
 + 12 s tystnad: buffringen gav två fönster, båda inom talpartiet. Tystnaden och

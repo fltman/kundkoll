@@ -2,14 +2,16 @@ import Foundation
 
 /// Kör en riktig ljudfil genom en vald arkivmotor.
 ///
-///     Kundkoll --prov-transkribering <fil.wav> [motor] [modell]
+///     Kundkoll --prov-transkribering <fil.wav> [motor] [modell] [språk]
 ///
 /// Motor: whisperCpp, mlx, openai eller elevenlabs. Utan motor provas den
 /// som är vald i inställningarna. Molnmotorerna kostar och skickar ljudet
-/// till tjänsten — precis som i drift.
+/// till tjänsten — precis som i drift. Språk: "sv", "no", "da", "en" eller
+/// "auto" för «avgör själv»; utan språk provas svenska.
 enum Transkriberingsprov {
 
-    static func kör(fil: String, motor: String?, modell: String?) async -> Int32 {
+    static func kör(fil: String, motor: String?, modell: String?,
+                    språk: String? = "sv") async -> Int32 {
         let url = URL(fileURLWithPath: fil)
         guard FileManager.default.fileExists(atPath: url.path) else {
             print("Hittar inte \(fil)"); return 1
@@ -33,6 +35,7 @@ enum Transkriberingsprov {
 
         print("Motor:  \(val.motor.namn)")
         print("Modell: \(val.arkivmodell)")
+        print("Språk:  \(Mötesspråk.namn(språk))")
         if let brist = Arkivtranskribering.brister(val).first {
             print("Kan inte köra: \(brist)")
             return 1
@@ -41,7 +44,8 @@ enum Transkriberingsprov {
         let t0 = Date()
         let rader: [Yttrande]
         do {
-            rader = try await Arkivtranskribering.kör(fil: url, röst: .motpart) { f in
+            rader = try await Arkivtranskribering.kör(fil: url, röst: .motpart,
+                                                      språk: språk) { f in
                 if !f.senasteRad.isEmpty {
                     print(String(format: "  [%3.0f %%] %@", f.andel * 100, f.senasteRad))
                 }

@@ -1,0 +1,105 @@
+<div class="manual">
+<nav class="innehåll">
+  <a href="#kunder">Kunder och projekt</a>
+  <a href="#spela-in">Spela in ett möte</a>
+  <a href="#efter">Efter mötet</a>
+  <a href="#vem">Vem är vem</a>
+  <a href="#importera">Importera inspelningar</a>
+  <a href="#tavla">Att göra-tavlan</a>
+  <a href="#min-vecka">Min vecka</a>
+  <a href="#brief">Inför mötet</a>
+  <a href="#mail">Mail och bilagor</a>
+  <a href="#chatt">Chatten</a>
+  <a href="#anteckningar">Anteckningar och Obsidian</a>
+  <a href="#tid">Tidslogg</a>
+  <a href="#palett">Paletten</a>
+  <a href="#installningar">Inställningar</a>
+  <a href="#filer">Filerna på disk</a>
+</nav>
+<div>
+<h1>Manual</h1>
+<p class="ingress dämpad">Appen är byggd kring en enkel ordning: en kund är en mapp, ett projekt är en mapp i den, ett möte är en mapp i projektet. Allt du ser i appen finns som filer, och tvärtom.</p>
+
+<h2 id="kunder">Kunder och projekt</h2>
+<figure class="skärm"><img src="bilder/oversikt.png" alt="Kundens översikt" width="1400"></figure>
+<p>Sidopanelen listar kunderna. <em>Ny kund</em> längst ner skapar en mapp under <code>~/Documents/Kunder</code>. En kund som skapas i Finder dyker upp av sig själv; appen bevakar mappen.</p>
+<p>Kundens översikt visar kommande möten ur kalendern, projekten, kontakterna och de senaste inspelningarna. Flikarna högst upp byter till tavlan, inspelningarna, anteckningarna och mejlen. Högerklick på en kund eller ett projekt i sidopanelen ger <em>Döp om</em> och <em>Ta bort</em>; borttaget hamnar i papperskorgen.</p>
+<p>Kontakter hämtas ur Kontakter-appen eller skrivs in för hand under <em>Hantera</em>. En kontakt kan ha en profilbild, en roll och en röst, se <a href="#vem">Vem är vem</a>. Döper du om en kontakt följer namnet med i röster, möten och uppgifter.</p>
+
+<h2 id="spela-in">Spela in ett möte</h2>
+<figure class="skärm"><img src="bilder/inspelning.png" alt="Inspelningsfönstret innan start" width="1400"></figure>
+<p>Knappen med den röda pricken i verktygsraden, eller <em>Spela in</em> på ett möte i listan, öppnar inspelningsfönstret. Välj projekt och språk — svenska, engelska eller <em>Avgör själv</em> för möten på flera språk — och starta.</p>
+<p>Två spår spelas in: din mikrofon och datorns ljud, alltså motparten i Teams, Zoom, FaceTime eller en telefon som speglas till datorn. Livetranskriptet rullar under mötet med KB-Whisper lokalt. Insiktspanelen till höger lyssnar efter sådant som behöver slås upp och svarar ur kundens material, om Ollama finns.</p>
+<p>Sitter ni i samma rum kan du välja <em>Bara mikrofonen</em>: allt hamnar på ett spår och rösterna delas upp efteråt.</p>
+<div class="varning">Stänger du appen eller datorn under ett möte sparas ljudet som redan spelats in. Mötet märks «avbruten» och kan efterbearbetas igen med högerklick.</div>
+
+<h2 id="efter">Efter mötet</h2>
+<figure class="skärm"><img src="bilder/mote.png" alt="Mötesvyn med sammanfattningen" width="1400"></figure>
+<p>När inspelningen stoppas börjar arkivpasset i bakgrunden: ljudet transkriberas om i arkivkvalitet, rösterna delas upp och känns igen, och chattens modell skriver en sammanfattning med <em>Beslut</em>, <em>Öppna frågor</em> och åtaganden. En notis säger till när det är klart. Det tar ungefär en tiondel av mötets längd.</p>
+<p>Mötesvyn har tre flikar. <em>Sammanfattning</em> med knappen <em>Skriv uppföljningsmejl</em>, som lägger ett utkast i Mail. <em>Transkript</em> med spelaren: <em>Spela upp mötet</em> rullar ljudet och markerar raden som hörs; klick på en rad hoppar dit. <em>Att göra</em> med det som plockades ut till tavlan.</p>
+<figure class="skärm"><img src="bilder/mote-transkript.png" alt="Transkriptet med spelaren igång" width="1400"></figure>
+<p>Verktygsraden i mötesvyn: <em>Vem är vem</em>, öppna i Obsidian, visa mappen i Finder, <em>Efterbearbeta igen</em> med val av motor och språk, och chatten om mötet.</p>
+
+<h2 id="vem">Vem är vem</h2>
+<figure class="skärm"><img src="bilder/vem-ar-vem.png" alt="Vem är vem-bladet" width="1400"></figure>
+<p>Motpartsspåret delas upp per röst. Varje röst får ett avtryck som jämförs med kundens kända röster. En röst som liknar en känd tillräckligt får namnet direkt; en som är nära visas som <em>trolig</em> med procentsatsen, och du bekräftar eller väljer någon annan. Deltagarna i kalendermötet står som förslag. Det du sätter lärs in och känns igen nästa gång.</p>
+<p>Ett namn som satts fel byts under samma blad. Röstprofilerna finns under <em>Hantera</em> på kunden, där en profil också går att ta bort — den glöms då, utan att mötena ändras.</p>
+
+<h2 id="importera">Importera inspelningar</h2>
+<p><em>Importera</em> i menyn under de tre prickarna tar ljudfiler som spelats in någon annanstans: telefonen, en diktafon, en Teams-inspelning. Importen går i kö i bakgrunden och kan avbrytas. Ett importerat möte ser ut som ett inspelat, med ett spår.</p>
+<p>Under fliken <em>Inspelningar</em> visas alla möten hos kunden med läge: klar, live, avbruten eller fel. Högerklick ger <em>Efterbearbeta igen</em>, <em>Flytta till projekt</em>, <em>Döp om</em> och <em>Ta bort</em>.</p>
+
+<h2 id="tavla">Att göra-tavlan</h2>
+<figure class="skärm"><img src="bilder/tavla.png" alt="Att göra-tavlan" width="1400"></figure>
+<p>Tavlan har tre spalter: att göra, pågår, klart. Kort kommer ur mötena och ur mejlen, med den som ska göra det, ett datum och en länk till där det sades. Dra ett kort mellan spalterna, klicka för att redigera, högerklicka för att lägga det i Påminnelser. <em>Person</em>-väljaren filtrerar på den som fått uppgiften.</p>
+<p>Datum tolkas ur det som sades: «före fredag» sagt en onsdag blir fredagens datum, «i slutet av månaden» blir den sista. Passerat datum rödmarkeras. Tavlan finns också som <code>Att göra.md</code> i kundmappen, så att den syns i Obsidian.</p>
+
+<h2 id="min-vecka">Min vecka</h2>
+<figure class="skärm"><img src="bilder/min-vecka.png" alt="Min vecka" width="1400"></figure>
+<p>Överst i sidopanelen. Samlar det öppna hos alla kunder: försenat först, sedan veckans, sedan resten. Mötena för de närmaste dagarna står bredvid. Personfiltret gäller här också.</p>
+
+<h2 id="brief">Inför mötet</h2>
+<p>En kvart före ett kundmöte i kalendern kommer en notis. Klicket öppnar briefen: förra mötet i samma serie med det som lämnades obesvarat, öppna åtaganden och mejlen sedan sist. <em>Förbered</em> på ett möte i listan öppnar samma sak när som helst. <em>Spela in mötet</em> längst ner går direkt till inspelning med rätt projekt.</p>
+<figure class="skärm"><img src="bilder/projekt.png" alt="Projektöversikten med lägesbilden" width="1400"></figure>
+<p>Projektets översikt börjar med <em>Läget just nu</em>, en lägesbild skriven ur möten, tavla, mejl och anteckningar. Den skrivs om när underlaget ändrats, och sparas som <code>Läget.md</code> i projektmappen.</p>
+
+<h2 id="mail">Mail och bilagor</h2>
+<figure class="skärm"><img src="bilder/mail.png" alt="Mejlfliken" width="1400"></figure>
+<p>Fliken <em>Mail</em> söker kundens mejl i Mail-appen på kontakternas adresser och domän. Bilagorna hämtas och görs sökbara: PDF, Word, Excel, PowerPoint och bilder läses av. Åtaganden i mejlen plockas till tavlan. Ett klick på ett mejl öppnar det i Mail.</p>
+
+<h2 id="chatt">Chatten</h2>
+<figure class="skärm"><img src="bilder/chatt.png" alt="Chattpanelen" width="1400"></figure>
+<p>Pratbubblan i verktygsraden öppnar chatten om kunden eller projektet. Den svarar ur transkript, anteckningar, mejl med bilagor, kontakter och tidigare svar, och hänvisar till underlaget med siffror som går att klicka. Finns svaret inte i materialet säger den det.</p>
+<p>Ett projekt kan kopplas till mappar utanför kundmappen, till exempel källkod. De genomsöks av Claude Code när du frågar, och svaret kommer som ett eget meddelande när det är klart.</p>
+
+<h2 id="anteckningar">Anteckningar och Obsidian</h2>
+<figure class="skärm"><img src="bilder/anteckningar.png" alt="Anteckningsfliken" width="1400"></figure>
+<p>Anteckningar är markdownfiler i kundens eller projektets mapp. Varje kundmapp är ett Obsidian-valv och öppnas i Obsidian från verktygsraden. Det du skriver i Obsidian syns i appen, och tvärtom.</p>
+
+<h2 id="tid">Tidslogg</h2>
+<figure class="skärm"><img src="bilder/tid.png" alt="Tidsfliken i projektet" width="1400"></figure>
+<p>Fliken <em>Tid</em> i projektet loggar timmar. Möten loggas automatiskt med sin längd; övrigt skrivs in för hand. Summan per månad står överst och exporteras som CSV.</p>
+
+<h2 id="palett">Paletten</h2>
+<p>⌘K öppnar paletten. Skriv några bokstäver av en kund, ett projekt, ett möte eller en vy och tryck retur. ⌘F söker i allt material hos alla kunder.</p>
+
+<h2 id="installningar">Inställningar</h2>
+<figure class="skärm"><img src="bilder/installningar.png" alt="Inställningarna, fliken Diagnos" width="1400"></figure>
+<p>⌘, öppnar inställningarna. <em>Modell</em> väljer leverantör och nyckel för chatten. <em>Transkribering</em> pekar ut whisper.cpp och Pythonmiljön och väljer arkivmotor. <em>Diagnos</em> provar allt: whisper-server, modellerna, Python, pyannote, Ollama, behörigheterna — och säger vad som saknas och hur det ordnas.</p>
+
+<h2 id="filer">Filerna på disk</h2>
+<pre><code>~/Documents/Kunder/
+  Fjällbo Energi/                 en kund = ett Obsidian-valv
+    kund.json                     kontakter, projekt
+    Att göra.md · uppgifter.json  tavlan
+    Mail/mail.json + Bilagor/     mejlcache
+    Dataplattform/                ett projekt
+      Läget.md
+      2026-08-20 0930 Uppstart dataplattform/
+        möte.json                 tider, deltagare, sammanfattning
+        Transkript.md
+        jag.wav · motpart.wav     två spår, 16 kHz
+    .kundkoll/                    index.db, röstprofiler, chattar</code></pre>
+<p>Radera en mapp så är den borta ur appen. Kopiera en kundmapp till en annan dator så följer allt med. Ljudet är det enda som tar plats: ungefär två megabyte per minut för båda spåren.</p>
+</div>
+</div>

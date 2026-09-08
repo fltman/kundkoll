@@ -21,6 +21,7 @@ struct Huvudvy: View {
     @State private var utfällda: Set<String> = []
     @State private var visaSök = false
     @State private var visaPalett = false
+    @State private var visaOm = false
     /// Möte respektive uppgift öppnad från paletten.
     @State private var palettMöte: Palettmöte?
     @State private var palettUppgift: Palettuppgift?
@@ -152,6 +153,8 @@ struct Huvudvy: View {
         .onChange(of: kalender.ändringar) { planeraBriefingar() }
         .sheet(isPresented: $visaNyKund) { nyKundBlad }
         .sheet(isPresented: $visaNyckel) { Modellvy() }
+        .sheet(isPresented: $visaOm) { Omvy() }
+        .onReceive(NotificationCenter.default.publisher(for: .visaOm)) { _ in visaOm = true }
         .sheet(item: $namnbyte) { post in namnblad(för: post) }
         .confirmationDialog(
             "Flytta till papperskorgen?",
@@ -169,6 +172,15 @@ struct Huvudvy: View {
                 Text("\(p.namn) med inspelningar och anteckningar flyttas till papperskorgen. "
                      + "Uppgifterna blir kvar hos kunden, utan projekt.")
             }
+        }
+        // Ett projekt som väljs någon annanstans ifrån — paletten, sökningen,
+        // en notis, kundens översikt eller ett namnbyte — fäller ut sin gren.
+        // Sedan är det bara pilen som stänger den igen.
+        .onChange(of: val) {
+            guard let projekt = val?.projekt,
+                  let kund = arkiv.kunder.first(where: { $0.namn == projekt.kundnamn })
+            else { return }
+            utfällda.insert(kund.id)
         }
         // En kund som döpts om eller tagits bort i Finder får inte lämna
         // ett val som pekar på en mapp som inte finns.
@@ -322,10 +334,13 @@ struct Huvudvy: View {
         }
     }
 
-    /// Kundens gren minns om den är utfälld.
+    /// Kundens gren minns om den är utfälld. `utfällda` är enda sanningen om
+    /// trädets form — låg utfällningen också i valet gick grenen varken att
+    /// stänga medan ett av dess projekt var valt eller att hålla öppen när
+    /// valet flyttade därifrån.
     private func bindning(för kund: Kund) -> Binding<Bool> {
         Binding(
-            get: { utfällda.contains(kund.id) || val?.projekt?.kundnamn == kund.namn },
+            get: { utfällda.contains(kund.id) },
             set: { utfälld in
                 if utfälld { utfällda.insert(kund.id) } else { utfällda.remove(kund.id) }
             })
@@ -388,6 +403,7 @@ struct Huvudvy: View {
                     Divider()
                     Button("Inställningar …") { visaNyckel = true }
                         .keyboardShortcut(",", modifiers: .command)
+                    Button("Om \(Appnamn.visat) …") { visaOm = true }
                 } label: {
                     Label("Mer", systemImage: "ellipsis.circle")
                 }

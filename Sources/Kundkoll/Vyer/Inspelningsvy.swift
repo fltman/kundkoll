@@ -16,7 +16,11 @@ struct Inspelningsvy: View {
 
     @State private var titel = ""
     @State private var valtProjekt: Projekt?
-    @State private var språk = "sv"
+    /// "sv", "en" eller nil för att låta motorn avgöra.
+    @State private var språk: String? = "sv"
+    /// Språket man valde sist. Den som har många engelska möten ska slippa
+    /// välja om varje gång. "auto" står för «avgör själv».
+    @AppStorage("kundkoll.inspelningsspråk") private var sparatSpråk = "sv"
     @State private var mikrofoner: [Ljudinfångning.Mikrofon] = []
     @State private var valdMikrofon: Ljudinfångning.Mikrofon?
     @State private var projektlista: [Projekt] = []
@@ -46,6 +50,7 @@ struct Inspelningsvy: View {
         valdMikrofon = mikrofoner.first { $0.id == sparadMikrofon } ?? mikrofoner.first
         projektlista = arkiv.projekt(för: kund)
         valtProjekt = projekt
+        språk = sparatSpråk == "auto" ? nil : sparatSpråk
         if titel.isEmpty { titel = möte?.titel ?? "" }
 
         // Startat från ett möte: allt som behövs är redan känt.
@@ -67,13 +72,16 @@ struct Inspelningsvy: View {
                     ForEach(projektlista) { p in Text(p.namn).tag(Projekt?.some(p)) }
                 }
                 Picker("Språk", selection: $språk) {
-                    Text("Svenska").tag("sv")
-                    Text("Engelska").tag("en")
+                    ForEach(Mötesspråk.val, id: \.kod) { s in
+                        Text(s.namn).tag(String?.some(s.kod))
+                    }
+                    Text("Avgör själv").tag(String?.none)
                 }
                 .help("Liven transkriberar på det valda språket, och arkivpasset "
-                      + "efteråt likaså. KB-Whisper översätter engelska till "
-                      + "svenska, så engelska möten tar arkivvägen via MLX eller "
-                      + "molnet.")
+                      + "efteråt likaså. «Avgör själv» gissar språket ur en bit "
+                      + "av mötet där någon talar — för möten på flera språk. "
+                      + "KB-Whisper översätter allt till svenska, så andra språk "
+                      + "än svenska tar arkivvägen via MLX eller molnet.")
                 Picker("Mikrofon", selection: $valdMikrofon) {
                     ForEach(mikrofoner) { m in Text(m.namn).tag(Ljudinfångning.Mikrofon?.some(m)) }
                 }
@@ -101,12 +109,14 @@ struct Inspelningsvy: View {
                     session.återställ()
                     Inspelningsfönster.stäng()
                 }
+                .accessibilityIdentifier("inspelning.avbryt")
                 Spacer()
                 Button(action: starta) {
                     Label("Spela in", systemImage: "record.circle")
                 }
                 .keyboardShortcut(.defaultAction)
                 .disabled(valdMikrofon == nil)
+                .accessibilityIdentifier("inspelning.starta")
             }
         }
         .padding(20)
@@ -182,6 +192,7 @@ struct Inspelningsvy: View {
                     Label("Stoppa", systemImage: "stop.fill")
                 }
                 .keyboardShortcut(.defaultAction)
+                .accessibilityIdentifier("inspelning.stoppa")
                 .disabled(session.läge == .avslutar)
             }
             .padding(16)
@@ -261,6 +272,7 @@ struct Inspelningsvy: View {
                     Inspelningsfönster.stäng()
                 }
                 .keyboardShortcut(.defaultAction)
+                .accessibilityIdentifier("inspelning.klar")
             }
             .padding(.top, 4)
         }
@@ -271,6 +283,7 @@ struct Inspelningsvy: View {
     private func starta() {
         guard let mikrofon = valdMikrofon else { return }
         sparadMikrofon = mikrofon.id
+        sparatSpråk = språk ?? "auto"
         let placering: Placering = valtProjekt.map { .projekt($0) } ?? .kund(kund)
         let namn = titel.trimmingCharacters(in: .whitespaces)
         Task {

@@ -103,7 +103,7 @@ enum Läget {
         \(bild.text)
 
         ---
-        Skriven av Kundkoll ur uppgifter, möten och mejl. Skrivs om när \
+        Skriven av \(Appnamn.visat) ur uppgifter, möten och mejl. Skrivs om när \
         underlaget ändras — redigera inte här.
         """
         try? md.write(to: projekt.mapp.appending(path: "Läget.md"),

@@ -1,0 +1,66 @@
+<h1>Installation av kringtjänsterna</h1>
+<p class="ingress dämpad">Appen gör själva arbetet lokalt, och lånar tre saker från datorn: whisper.cpp för transkriberingen, en Pythonmiljö för rösterna och Ollama för insikter och betydelsesökning. Här är hur de sätts upp. Fliken <em>Diagnos</em> under ⌘, i appen säger vad som finns och vad som fattas.</p>
+
+<h2>1. whisper.cpp med KB-Whisper — krävs</h2>
+<p>Transkriberingen körs med <a href="https://github.com/ggml-org/whisper.cpp">whisper.cpp</a> och Kungliga bibliotekets svenska modeller. Uppmätt slår KB-Whisper medium OpenAIs large-v3-turbo på svenska, trots att den är mindre.</p>
+<pre><code>git clone https://github.com/ggml-org/whisper.cpp ~/Projekt/whisper.cpp
+cd ~/Projekt/whisper.cpp
+cmake -B build -DGGML_METAL=ON && cmake --build build -j --config Release
+
+# Modellerna: KB-Whisper i ggml-format, och Silero för taldetekteringen
+cd models
+curl -L -o kb_whisper_ggml_small.bin  https://huggingface.co/KBLab/kb-whisper-small/resolve/main/ggml-model.bin
+curl -L -o kb_whisper_ggml_medium.bin https://huggingface.co/KBLab/kb-whisper-medium/resolve/main/ggml-model.bin
+curl -L -o ggml-silero-v5.1.2.bin     https://huggingface.co/ggml-org/whisper-vad/resolve/main/ggml-silero-v5.1.2.bin</code></pre>
+<p>Standardvägen är <code>~/Projekt/whisper.cpp</code>. Ligger den någon annanstans pekar du ut mappen under ⌘, → Transkribering. Appen behöver <code>build/bin/whisper-server</code>, <code>build/bin/whisper-cli</code> och de tre modellfilerna i <code>models/</code>.</p>
+<div class="varning">Taldetekteringen är inte valfri. Utan Silero hittar whisper på text ur tystnad — «Tack.» ur fem sekunder tystnad är uppmätt. Appen har tre lager till mot det, men modellen ska finnas.</div>
+
+<h2>2. Pythonmiljö för röstanalysen — rekommenderas</h2>
+<p>Motpartens röster delas upp av <a href="https://github.com/pyannote/pyannote-audio">pyannote</a> och känns igen med ECAPA-avtryck från speechbrain. Båda körs i en Pythonprocess som appen startar.</p>
+<pre><code>python3 -m venv ~/Projekt/transcriber/venv
+source ~/Projekt/transcriber/venv/bin/activate
+pip install torch torchaudio speechbrain pyannote.audio
+
+# pyannotes modell hämtas en gång med en token från huggingface.co
+# (godkänn modellens villkor på sidan pyannote/speaker-diarization-3.1 först)
+HF_TOKEN=hf_... python -c "from pyannote.audio import Pipeline; Pipeline.from_pretrained('pyannote/speaker-diarization-3.1', use_auth_token='$HF_TOKEN')"
+
+# Engelska och flerspråkiga möten går via MLX
+pip install mlx-whisper 'mlx==0.31.2'</code></pre>
+<p>Standardvägen är <code>~/Projekt/transcriber/venv</code>; en annan pekas ut under ⌘, → Transkribering. Saknas pyannote delas rösterna med en reservmetod, som är märkbart sämre. Saknas miljön helt delas de inte alls, och appen säger det i mötesvyn.</p>
+<div class="varning">mlx-whisper kräver mlx 0.31.2 på macOS 26.1. Nyare mlx faller mot Metal-kompilatorn utan att lämna någon utdata.</div>
+
+<h2>3. Ollama — frivilligt, för insikter och betydelsesökning</h2>
+<p>Under ett möte lyssnar appen efter sådant deltagarna behöver slå upp, och svarar ur kunskapsbanken. Bedömningen görs av en lokal modell via <a href="https://ollama.com">Ollama</a>, så att allt som sägs granskas på datorn. Samma Ollama bäddar in materialet med bge-m3, vilket gör att sökningen förstår betydelse och inte bara ord.</p>
+<pre><code>brew install ollama
+ollama serve &
+ollama pull qwen3:8b     # 12 av 12 rätt utan falska larm i mätningen
+ollama pull bge-m3       # betydelsesökningen; hybriden tog 11 av 12 mot 9 för ordsökning ensam</code></pre>
+<p>Utan Ollama fungerar allt annat. Insiktspanelen säger att ingen lokal modell nås, och sökningen går på ord.</p>
+
+<h2>4. Modellen för chatten — ett val</h2>
+<p>Chatten, sammanfattningarna och lägesbilderna använder en språkmodell. Välj under ⌘, → Modell:</p>
+<table>
+  <tr><th>Leverantör</th><th>Format</th><th>Standardmodell</th></tr>
+  <tr><td>OpenRouter</td><td>OpenAI</td><td><code>anthropic/claude-sonnet-5</code></td></tr>
+  <tr><td>Anthropic</td><td>Anthropic Messages</td><td><code>claude-sonnet-5</code></td></tr>
+  <tr><td>OpenAI</td><td>OpenAI</td><td><code>gpt-5</code></td></tr>
+  <tr><td>Azure OpenAI</td><td>OpenAI</td><td>ur adressen</td></tr>
+  <tr><td>Lokal: Ollama, LM Studio, MLX</td><td>OpenAI</td><td><code>llama3.1:8b</code></td></tr>
+</table>
+<p>Nyckeln sparas i macOS nyckelring. En lokal modell är vägen när materialet inte får lämna datorn alls: <code>mlx_lm.server --model mlx-community/…</code> är uppmätt genom hela provsviten.</p>
+
+<h2>5. Claude Code — frivilligt, för kopplade mappar</h2>
+<p>Ett projekt kan kopplas till mappar utanför kundmappen: källkod, ritningar, offerter. De indexeras inte; de genomsöks av en agent när du frågar. Agenten är <a href="https://claude.com/claude-code">Claude Code</a>, som ska finnas installerad, och det den läser går till Anthropic.</p>
+
+<h2>6. Behörigheter</h2>
+<table>
+  <tr><th>Mikrofon</th><td>Krävs. Ditt eget spår.</td></tr>
+  <tr><th>Skärminspelning</th><td>Krävs för datorljudet. ScreenCaptureKit fångar bara ljud; ingen bild sparas.</td></tr>
+  <tr><th>Kalender</th><td>Möten hos kunden, brief en kvart före, deltagarna som förslag när röster märks.</td></tr>
+  <tr><th>Kontakter</th><td>Hämta personer ur adressboken, och lägga upp dem där på knapptryck.</td></tr>
+  <tr><th>Automatisering: Mail</th><td>Söka kundens mejl och hämta bilagor. Bara AppleScript, aldrig Full Disk Access.</td></tr>
+  <tr><th>Påminnelser</th><td>Lägga uppgifter från tavlan i Påminnelser, envägs.</td></tr>
+  <tr><th>Notiser</th><td>När ett möte är färdigbearbetat, och en kvart före nästa.</td></tr>
+</table>
+<p>Alla ges i Systeminställningar → Integritet och säkerhet. Diagnosfliken visar vilka som är givna.</p>

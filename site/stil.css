@@ -1,0 +1,99 @@
+/* Bjarbys kundkoll — produktsidan. Rena statiska sidor, ingen byggkedja. */
+:root {
+  --text: #1d1d1f; --dämpad: #6e6e73; --svag: #a1a1a6;
+  --botten: #f5f5f7; --yta: #ffffff; --kant: rgba(0,0,0,0.08);
+  --accent: #0a66ff; --accent-mörk: #0752cc; --varm: #f96854;
+  --hörn: 14px; --maxbredd: 1080px;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --text: #f5f5f7; --dämpad: #a1a1a6; --svag: #6e6e73;
+          --botten: #101012; --yta: #1c1c1e; --kant: rgba(255,255,255,0.1);
+          --accent: #4c8dff; --accent-mörk: #79a9ff; }
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body { margin: 0; background: var(--botten); color: var(--text);
+  font: 17px/1.55 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  -webkit-font-smoothing: antialiased; }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+img { max-width: 100%; height: auto; display: block; }
+code, pre { font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 0.92em; }
+code { background: var(--kant); padding: 0.1em 0.35em; border-radius: 5px; }
+pre { background: var(--yta); border: 1px solid var(--kant); border-radius: 10px; padding: 14px 16px; overflow-x: auto; line-height: 1.5; }
+pre code { background: none; padding: 0; }
+h1, h2, h3 { letter-spacing: -0.01em; line-height: 1.2; }
+h1 { font-size: 2.6rem; margin: 0 0 0.4em; }
+h2 { font-size: 1.7rem; margin: 2.2em 0 0.6em; }
+h3 { font-size: 1.15rem; margin: 1.6em 0 0.4em; }
+p, li { max-width: 68ch; }
+.dämpad { color: var(--dämpad); }
+
+header.topp { position: sticky; top: 0; z-index: 10; backdrop-filter: saturate(180%) blur(20px);
+  background: color-mix(in srgb, var(--botten) 80%, transparent); border-bottom: 1px solid var(--kant); }
+header.topp .rad { max-width: var(--maxbredd); margin: 0 auto; padding: 10px 24px; display: flex; align-items: center; gap: 18px; }
+header.topp .namn { display: flex; align-items: center; gap: 10px; font-weight: 600; color: var(--text); }
+header.topp .namn img { width: 28px; height: 28px; border-radius: 7px; }
+header.topp nav { margin-left: auto; display: flex; gap: 18px; flex-wrap: wrap; }
+header.topp nav a { color: var(--dämpad); font-size: 0.95rem; }
+header.topp nav a.aktiv, header.topp nav a:hover { color: var(--text); text-decoration: none; }
+header.topp nav a.patreon { color: var(--varm); font-weight: 600; }
+
+main { max-width: var(--maxbredd); margin: 0 auto; padding: 32px 24px 80px; }
+.hjälte { display: grid; grid-template-columns: 1.1fr 1fr; gap: 40px; align-items: center; padding: 40px 0 20px; }
+.hjälte .ingress { font-size: 1.25rem; color: var(--dämpad); max-width: 46ch; }
+.hjälte img.ikon { width: 84px; height: 84px; border-radius: 20px; margin-bottom: 18px; box-shadow: 0 8px 24px rgba(0,0,0,0.18); }
+.knappar { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 22px; }
+.knapp { display: inline-block; padding: 11px 20px; border-radius: 999px; font-weight: 600; background: var(--accent); color: #fff; }
+.knapp:hover { background: var(--accent-mörk); text-decoration: none; }
+.knapp.sekundär { background: var(--yta); color: var(--text); border: 1px solid var(--kant); }
+.knapp.patreon { background: var(--varm); }
+.liten { font-size: 0.9rem; color: var(--dämpad); }
+
+.skärm { border-radius: var(--hörn); overflow: hidden; border: 1px solid var(--kant); box-shadow: 0 20px 50px rgba(0,0,0,0.16); background: var(--yta); }
+.skärm img { width: 100%; }
+figure { margin: 0; }
+figcaption { font-size: 0.9rem; color: var(--dämpad); margin-top: 10px; }
+
+.video { margin: 36px 0 8px; }
+.video video { width: 100%; height: auto; border-radius: var(--hörn); border: 1px solid var(--kant); background: #101012; box-shadow: 0 20px 50px rgba(0,0,0,0.16); }
+.video .liten { text-align: center; margin-top: 10px; }
+
+.punkter { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 16px; margin: 28px 0; }
+.punkt { background: var(--yta); border: 1px solid var(--kant); border-radius: var(--hörn); padding: 20px; }
+.punkt h3 { margin: 0 0 6px; font-size: 1.05rem; }
+.punkt p { margin: 0; color: var(--dämpad); font-size: 0.97rem; }
+
+.avsnitt { display: grid; grid-template-columns: 1fr 1.25fr; gap: 40px; align-items: center; margin: 64px 0; }
+.avsnitt.spegel { grid-template-columns: 1.25fr 1fr; }
+.avsnitt.spegel .text { order: 2; }
+.avsnitt h2 { margin-top: 0; }
+.avsnitt .text p { color: var(--dämpad); }
+
+.lokalt { background: var(--yta); border: 1px solid var(--kant); border-radius: var(--hörn); padding: 28px 32px; margin: 48px 0; }
+.lokalt h2 { margin-top: 0; }
+table { border-collapse: collapse; width: 100%; margin: 16px 0 24px; font-size: 0.95rem; }
+th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--kant); vertical-align: top; }
+th { color: var(--dämpad); font-weight: 600; }
+.steg { counter-reset: steg; padding-left: 0; list-style: none; }
+.steg > li { position: relative; padding-left: 44px; margin: 18px 0; }
+.steg > li::before { counter-increment: steg; content: counter(steg); position: absolute; left: 0; top: 0;
+  width: 30px; height: 30px; border-radius: 50%; background: var(--accent); color: #fff; font-weight: 700;
+  display: flex; align-items: center; justify-content: center; font-size: 0.9rem; }
+details { border-bottom: 1px solid var(--kant); padding: 12px 0; }
+details summary { cursor: pointer; font-weight: 600; list-style: none; display: flex; justify-content: space-between; }
+details summary::after { content: "+"; color: var(--dämpad); }
+details[open] summary::after { content: "–"; }
+details p { color: var(--dämpad); }
+.varning { border-left: 3px solid var(--varm); padding: 4px 14px; color: var(--dämpad); margin: 16px 0; }
+.innehåll { position: sticky; top: 64px; font-size: 0.92rem; }
+.innehåll a { display: block; color: var(--dämpad); padding: 3px 0; }
+.manual { display: grid; grid-template-columns: 200px 1fr; gap: 40px; }
+footer { border-top: 1px solid var(--kant); color: var(--dämpad); font-size: 0.9rem; }
+footer .rad { max-width: var(--maxbredd); margin: 0 auto; padding: 28px 24px; display: flex; gap: 20px; flex-wrap: wrap; justify-content: space-between; }
+@media (max-width: 820px) {
+  .hjälte, .avsnitt, .avsnitt.spegel, .manual { grid-template-columns: 1fr; }
+  .avsnitt.spegel .text { order: 0; }
+  .innehåll { position: static; }
+  h1 { font-size: 2rem; }
+}

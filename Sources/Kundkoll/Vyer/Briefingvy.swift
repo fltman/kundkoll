@@ -5,6 +5,8 @@ import AppKit
 struct Briefingvy: View {
     let kund: Kund
     var möte: Kalendern.Möte?
+    /// Projektet inspelningen ska hamna i, när briefen öppnats från ett.
+    var projekt: Projekt?
     /// Öppnar ett tidigare möte i mötesvyn; briefen stängs först.
     var visaMöte: (Inspelning, URL) -> Void
 
@@ -40,7 +42,7 @@ struct Briefingvy: View {
                 if let möte {
                     Button {
                         stäng()
-                        Inspelningsfönster.öppna(kund: kund, projekt: nil, möte: möte)
+                        Inspelningsfönster.öppna(kund: kund, projekt: projekt, möte: möte)
                     } label: {
                         Label("Spela in mötet", systemImage: "record.circle")
                     }
@@ -48,6 +50,7 @@ struct Briefingvy: View {
                 }
                 Spacer()
                 Button("Stäng") { stäng() }.keyboardShortcut(.defaultAction)
+                    .accessibilityIdentifier("brief.stäng")
             }
             .padding(16)
         }

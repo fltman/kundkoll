@@ -9,6 +9,7 @@ struct Kontaktvy: View {
     @Environment(\.dismiss) private var stäng
 
     @State private var kontakter: [Kontakt] = []
+    @State private var lösaRöster: [Röstprofil] = []
     @State private var sökning = ""
     @State private var träffar: [Kontakt] = []
     @State private var nyttNamn = ""
@@ -33,6 +34,7 @@ struct Kontaktvy: View {
             HStack {
                 Spacer()
                 Button("Klar") { stäng() }.keyboardShortcut(.defaultAction)
+                    .accessibilityIdentifier("kontakter.klar")
             }
             .padding(16)
         }
@@ -45,7 +47,7 @@ struct Kontaktvy: View {
             Button("Ta bort", role: .destructive) {
                 try? arkiv.taBort(k, hos: kund)
                 attTaBort = nil
-                kontakter = arkiv.kontakter(för: kund)
+                läsOm()
             }
             Button("Avbryt", role: .cancel) { attTaBort = nil }
         } message: { k in
@@ -53,12 +55,10 @@ struct Kontaktvy: View {
                  + "posten i macOS Kontakter rörs inte.")
         }
         .sheet(item: $redigerar) { k in
-            Kontaktredigering(kund: kund, kontakt: k) { _ in
-                kontakter = arkiv.kontakter(för: kund)
-            }
+            Kontaktredigering(kund: kund, kontakt: k) { _ in läsOm() }
         }
         .onAppear {
-            kontakter = arkiv.kontakter(för: kund)
+            läsOm()
             if adressbok.harTillgång && kontakter.isEmpty {
                 träffar = adressbok.hosOrganisation(kund.namn)
             }
@@ -107,6 +107,8 @@ struct Kontaktvy: View {
                 }
             }
 
+            if !lösaRöster.isEmpty { rösterUtanKontakt }
+
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 8) {
                     TextField("Lägg till för hand", text: $nyttNamn)
@@ -132,7 +134,7 @@ struct Kontaktvy: View {
 
             if !adressbok.harTillgång {
                 VStack(spacing: 12) {
-                    Text("Kundkoll har inte tillgång till dina kontakter.")
+                    Text("\(Appnamn.visat) har inte tillgång till dina kontakter.")
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
                     Button("Ge tillgång") {
@@ -189,6 +191,57 @@ struct Kontaktvy: View {
             }
         }
         .frame(minWidth: 300)
+    }
+
+    /// Röster som fått namn i «Vem är vem» men inte finns som kontakt — efter
+    /// ett namnbyte på kontakten, eller ett namn skrivet på ett annat sätt.
+    /// De kan kopplas till en kontakt, så att avtrycken följer med dit, eller
+    /// glömmas.
+    private var rösterUtanKontakt: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Divider()
+            Text("Röster utan kontakt")
+                .font(.subheadline.weight(.medium))
+                .padding(.top, 6)
+            ForEach(lösaRöster) { p in
+                HStack(spacing: 8) {
+                    Image(systemName: "person.wave.2").foregroundStyle(.secondary)
+                    Text(p.namn)
+                    Text("· \(p.samtal) \(p.samtal == 1 ? "samtal" : "samtal")")
+                        .font(.caption).foregroundStyle(.secondary)
+                    Spacer()
+                    Menu("Är …") {
+                        ForEach(kontakter) { k in
+                            Button(k.namn) {
+                                try? arkiv.byt(personnamn: p.namn, till: k.namn, hos: kund)
+                                läsOm()
+                            }
+                        }
+                    }
+                    .fixedSize()
+                    .help("Koppla rösten till en kontakt. Avtrycken och mötena följer med.")
+                    Button {
+                        try? arkiv.taBortRöst(namn: p.namn, hos: kund)
+                        läsOm()
+                    } label: {
+                        Image(systemName: "trash")
+                    }
+                    .buttonStyle(.borderless)
+                    .help("Glöm rösten. Mötena behåller namnet.")
+                }
+            }
+            Text("Namn satta i «Vem är vem» som inte finns bland kontakterna.")
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+        }
+        .padding(.horizontal, 12)
+    }
+
+    private func läsOm() {
+        kontakter = arkiv.kontakter(för: kund)
+        lösaRöster = arkiv.egnaRöstprofiler(för: kund).filter { p in
+            !kontakter.contains { $0.namn.caseInsensitiveCompare(p.namn) == .orderedSame }
+        }
     }
 
     private func läggTillFörHand() {

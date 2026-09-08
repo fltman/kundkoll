@@ -302,9 +302,18 @@ struct Importrad: View {
                     ProgressView().controlSize(.small)
                 }
                 if !kö.väntande.isEmpty {
-                    Text("+\(kö.väntande.count) i kö")
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
+                    // Det som väntar ska gå att ångra utan att avbryta det
+                    // som pågår — en dubblett som råkat hamna i kön kostar
+                    // annars ett helt arkivpass.
+                    Menu("+\(kö.väntande.count) i kö") {
+                        ForEach(kö.väntande) { v in
+                            Button("Ta bort \(v.titel)") { kö.taBort(v) }
+                        }
+                    }
+                    .menuStyle(.borderlessButton)
+                    .fixedSize()
+                    .font(.caption)
+                    .help("Jobb som väntar. Välj ett för att ta bort det ur kön.")
                 }
                 Spacer()
                 Button("Avbryt") { kö.avbryt() }

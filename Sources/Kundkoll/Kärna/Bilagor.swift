@@ -103,7 +103,7 @@ enum Bilagor {
         var errorDescription: String? {
             switch self {
             case .nekad:
-                "Kundkoll får inte styra Mail. Ge tillstånd i Systeminställningar → Integritet och säkerhet → Automatisering."
+                "\(Appnamn.visat) får inte styra Mail. Ge tillstånd i Systeminställningar → Integritet och säkerhet → Automatisering."
             case .frånMail(let f):
                 f.isEmpty ? "Mail svarade med ett fel." : "Mail svarade: \(f)"
             }

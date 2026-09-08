@@ -324,8 +324,28 @@ actor Whisper {
         let bara = t.trimmingCharacters(in: CharacterSet(charactersIn: " .!?…-"))
         if bara.isEmpty { return true }
         if ärLoop(t) { return true }
-        return stående.contains(bara.lowercased())
+        let låg = bara.lowercased()
+        if inledningar.contains(where: { låg.hasPrefix($0) }) { return true }
+        return stående.contains(låg)
     }
+
+    /// Inledningar som ingen säger i ett möte men som whisper lärt sig ur
+    /// textade videor: tacket till skolan i slutet av filmen, texttjänstens
+    /// signatur. Bara som inledning — «tack till» mitt i en mening är riktigt
+    /// tal. «Tack till elever och personal vid Värmlande» kom ur ett riktigt
+    /// möte, på det egna spåret, i tystnad.
+    static let inledningar: [String] = [
+        "tack till elever och personal", "tack till alla som", "textning av", "textning:",
+        "undertexter av", "undertexter från", "undertextning av", "svensk textning",
+        "svensktextning", "översättning av", "översatt av", "tack för att ni tittade",
+        "tack för att du tittade", "glöm inte att prenumerera", "prenumerera på",
+        "subtitles by", "captions by", "transcribed by", "thanks for watching",
+        // Norska och danska: samma textade videor, andra ord. «Teksting av
+        // Nicolai Winther» kom ur trettio sekunders tystnad i ett norskt möte.
+        "teksting av", "tekstet av", "undertekster av", "norsk teksting",
+        "takk for at du så på", "takk for at dere så på", "abonner på",
+        "tekstning af", "undertekster af", "tak fordi du så med",
+    ]
 
     /// Fraser whisper lägger i munnen på tystnad. Bara exakta träffar räknas —
     /// "Tack." är påhitt, men "Tack för att du tog dig tid" är riktigt tal.
@@ -334,6 +354,8 @@ actor Whisper {
         "tack för att du tittade", "tack för hjälpen", "textning av", "hej då",
         "undertexter av", "undertextning av", "svensktextning", "amara.org",
         "textning.nu", "you", "thank you", "thanks for watching",
+        "takk", "takk.", "takk!", "tusen takk", "takk for meg", "ha det",
+        "tak", "tak.", "mange tak", "tak for det",
     ]
 
     /// "Ett stort stort stort stort …" — samma ord om och om igen är alltid

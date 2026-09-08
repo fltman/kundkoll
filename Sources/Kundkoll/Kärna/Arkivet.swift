@@ -23,10 +23,19 @@ final class Arkivet: ObservableObject {
     private var bevakare: Filbevakare?
     private var omläsning: Task<Void, Never>?
 
-    init(rot: URL? = nil) {
-        self.rot = rot ?? fm.homeDirectoryForCurrentUser
+    /// ~/Documents/Kunder, eller mappen i miljövariabeln KUNDKOLL_ROT — för
+    /// demonstrationer och skärmbilder utan riktiga kunder i sidopanelen.
+    static var standardrot: URL {
+        if let väg = ProcessInfo.processInfo.environment["KUNDKOLL_ROT"], !väg.isEmpty {
+            return URL(fileURLWithPath: väg)
+        }
+        return FileManager.default.homeDirectoryForCurrentUser
             .appending(path: "Documents")
             .appending(path: "Kunder")
+    }
+
+    init(rot: URL? = nil) {
+        self.rot = rot ?? Self.standardrot
         try? fm.createDirectory(at: self.rot, withIntermediateDirectories: true)
         läsOm()
         // Bara den delade instansen bevakar; proven skapar tillfälliga rötter.
@@ -209,6 +218,9 @@ final class Arkivet: ObservableObject {
         var ut = inspelning
         ut.arkivYttranden = uppdelning.yttranden
         ut.röstnamn = uppdelning.namn
+        ut.röstmetod = uppdelning.metod
+        ut.röstvarning = uppdelning.varning
+        ut.röstavtryck = uppdelning.avtryck
         try spara(ut, i: mapp)
         return ut
     }
@@ -646,6 +658,59 @@ final class Arkivet: ObservableObject {
         }
         alla[i] = kontakt
         try sparaKontakter(alla, för: kund)
+        // Rösten, mötena och tavlan känner personen på namnet.
+        if gammaltNamn != kontakt.namn {
+            try? byt(personnamn: gammaltNamn, till: kontakt.namn, hos: kund)
+        }
+    }
+
+    /// Byter namn på en person överallt hos kunden: röstprofilen, rösterna
+    /// i mötena och uppgifternas «vem».
+    ///
+    /// Ett namnbyte på kontakten lämnade annars en röst kvar under det
+    /// gamla namnet — «Kristin» bredvid «Kristin Sand Backen» — och mötena
+    /// höll fast vid det gamla. Finns redan en profil med det nya namnet
+    /// slås avtrycken ihop.
+    func byt(personnamn gammalt: String, till nytt: String, hos kund: Kund) throws {
+        let nytt = nytt.trimmingCharacters(in: .whitespaces)
+        guard !nytt.isEmpty, gammalt != nytt else { return }
+
+        var profiler = egnaRöstprofiler(för: kund)
+        if let g = profiler.firstIndex(where: { $0.namn == gammalt }) {
+            let gammal = profiler.remove(at: g)
+            if let n = profiler.firstIndex(where: { $0.namn == nytt }) {
+                for a in gammal.avtryck { profiler[n].lärDig(a) }
+                profiler[n].samtal += gammal.samtal
+            } else {
+                var ny = gammal
+                ny.namn = nytt
+                profiler.append(ny)
+            }
+            try sparaRöstprofiler(profiler, för: kund)
+        }
+
+        for (i, mapp) in inspelningar(för: kund) where i.röstnamn.values.contains(gammalt) {
+            var u = i
+            for (grupp, namn) in u.röstnamn where namn == gammalt { u.röstnamn[grupp] = nytt }
+            try? spara(u, i: mapp)
+        }
+
+        var ändrat = false
+        let uppdaterade = uppgifter(för: kund).map { u -> Uppgift in
+            guard u.vem?.caseInsensitiveCompare(gammalt) == .orderedSame else { return u }
+            var u = u
+            u.vem = nytt
+            ändrat = true
+            return u
+        }
+        if ändrat { try sparaUppgifter(uppdaterade, för: kund) }
+        sparningar += 1
+    }
+
+    /// Glömmer en röst. Mötena behåller namnet; det är avtrycket som tas bort.
+    func taBortRöst(namn: String, hos kund: Kund) throws {
+        try sparaRöstprofiler(egnaRöstprofiler(för: kund).filter { $0.namn != namn }, för: kund)
+        sparningar += 1
     }
 
     // MARK: - Chatt
@@ -821,7 +886,8 @@ final class Arkivet: ObservableObject {
         return alla.sorted { $0.namn.localizedStandardCompare($1.namn) == .orderedAscending }
     }
 
-    private func egnaRöstprofiler(för kund: Kund) -> [Röstprofil] {
+    /// Kundens egna röster, utan de delade från andra kunder.
+    func egnaRöstprofiler(för kund: Kund) -> [Röstprofil] {
         let url = kund.kontaktmapp.appending(path: "röstprofiler.json")
         guard let data = try? Data(contentsOf: url),
               let p = try? JSONDecoder.kundkoll.decode([Röstprofil].self, from: data)
@@ -881,7 +947,7 @@ final class Arkivet: ObservableObject {
     /// Transkript.md, Mail.md och Tid.md byggs om vid varje sparning, och en
     /// ändring gjord i Obsidian försvann tidigare utan förvarning.
     static let genereradRad =
-        "*Skriven av Kundkoll och byggs om vid varje sparning — ändra i appen, inte här.*"
+        "*Skriven av \(Appnamn.visat) och byggs om vid varje sparning — ändra i appen, inte här.*"
 
     private func markdown(för i: Inspelning, mapp: URL) -> String {
         var ut = """

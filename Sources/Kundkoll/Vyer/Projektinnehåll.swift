@@ -8,8 +8,13 @@ struct Projektinnehåll: View {
 
     @EnvironmentObject private var arkiv: Arkivet
     @EnvironmentObject private var session: Inspelningssession
+    @EnvironmentObject private var kalender: Kalendern
 
     @State private var flik: Flik = .översikt
+    @State private var möten: [Kalendern.Möte] = []
+    @State private var möteskopplingar: [String: String] = [:]
+    @State private var briefing: Kalendern.Möte?
+    @State private var visaMötesplockare = false
     @State private var kopplade: [Kopplad] = []
     @State private var inspelningar: [(Inspelning, URL)] = []
     @State private var öppnad: Kundinnehåll.Öppnad?
@@ -68,6 +73,7 @@ struct Projektinnehåll: View {
                     switch flik {
                     case .översikt:
                         lägesavsnitt
+                        mötesavsnitt
                         mappavsnitt
                     case .attGöra: Kanbanvy(kund: kund, projekt: projekt)
                     case .inspelningar: inspelningsflik
@@ -90,6 +96,18 @@ struct Projektinnehåll: View {
             Importvy(kund: kund, projekt: arkiv.projekt(för: kund),
                      förvald: släpptFil, förvaltProjekt: projekt, vidKlar: läsIn)
         }
+        .sheet(item: $briefing) { m in
+            Briefingvy(kund: kund, möte: m, projekt: projekt) { i, mapp in
+                öppnad = .init(inspelning: i, mapp: mapp)
+            }
+        }
+        .sheet(isPresented: $visaMötesplockare) {
+            Mötesplockare(kund: kund, projekt: projekt) { hämtaMöten() }
+        }
+        .task(id: projekt.id) { hämtaMöten() }
+        .onChange(of: kalender.ändringar) { hämtaMöten() }
+        .onReceive(NotificationCenter.default.publisher(
+            for: NSApplication.didBecomeActiveNotification)) { _ in hämtaMöten() }
         .onDrop(of: [.fileURL], isTargeted: nil) { leverantörer in
             guard let l = leverantörer.first else { return false }
             _ = l.loadObject(ofClass: URL.self) { url, _ in
@@ -221,6 +239,53 @@ struct Projektinnehåll: View {
             }
             skriverLäget = false
         }
+    }
+
+    /// Kundens möten som är kopplade till projektet. Kopplingen görs på
+    /// mötesraden hos kunden eller med «Lägg till möte» här — ingen regel
+    /// kan gissa vilket projekt ett möte gäller.
+    private var mötesavsnitt: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Avsnittsrubrik("Kommande möten")
+                Spacer()
+                Button("Lägg till möte") { visaMötesplockare = true }
+                    .accessibilityIdentifier("projekt.lägg-till-möte")
+                    .buttonStyle(.link)
+                    .help("Koppla ett av kundens möten, eller ett ledigt möte i kalendern, till projektet")
+            }
+            if möten.isEmpty {
+                Text(kalender.harTillgång
+                     ? "Inga kommande möten är kopplade till \(projekt.namn)."
+                     : "Ge tillgång till Kalender för att se inbokade möten.")
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                VStack(spacing: 0) {
+                    ForEach(Array(möten.enumerated()), id: \.element.id) { i, m in
+                        Mötesrad(möte: m, kund: kund, projekt: projekt,
+                                 förbered: { briefing = $0 }) {
+                            Button {
+                                try? arkiv.kopplaMöte(m.id, till: nil, för: kund)
+                                hämtaMöten()
+                            } label: {
+                                Image(systemName: "folder.badge.minus")
+                            }
+                            .buttonStyle(.borderless)
+                            .help("Koppla bort mötet från projektet. Det stannar hos kunden.")
+                        }
+                        if i < möten.count - 1 { Divider() }
+                    }
+                }
+                .kort(hörn: Stil.radhörn)
+            }
+        }
+    }
+
+    private func hämtaMöten() {
+        möteskopplingar = arkiv.möteskopplingar(för: kund)
+        guard kalender.harTillgång else { möten = []; return }
+        möten = kalender.möten().filter { möteskopplingar[$0.id] == projekt.namn }
     }
 
     /// Mappar utanför kundmappen som hör till projektet.

@@ -90,6 +90,7 @@ actor Import {
                    profiler: [Röstprofil],
                    väntadeRöster: Int? = nil,
                    språk: String? = "sv",
+                   vidMapp: (@Sendable (URL) -> Void)? = nil,
                    vidLäge: @Sendable @escaping (Läge) -> Void) async throws -> (Inspelning, URL) {
 
         await MainActor.run { vidLäge(Läge(steg: "Läser \(källa.lastPathComponent) …", andel: nil)) }
@@ -102,6 +103,10 @@ actor Import {
         let mapp = try await MainActor.run {
             try Arkivet.shared.nyInspelningsmapp(placering: placering, titel: titel, datum: inledd)
         }
+        // Kön behöver mappen så snart den finns. Utan det här ser den inte
+        // att inspelningen är upptagen förrän importen är klar, och samma
+        // mapp går att köa en gång till medan den skapas.
+        vidMapp?(mapp)
         // Faller omräkningen finns inget att behålla. Faller transkriberingen
         // däremot — fel språk, saknad motor — ligger det omräknade ljudet
         // kvar med felet i möte.json, så att det går att köra om i stället
