@@ -2011,6 +2011,26 @@ enum Tester {
         Prov.lika(MlxWhisper.kod("Swedish"), "sv", "och namnet översätts till kod")
         Prov.lika(MlxWhisper.kod("nb"), "no", "bokmål och nynorsk blir norska")
         Prov.lika(MlxWhisper.kod(""), nil, "tomt svar är ingen gissning")
+
+        // Ett uppmätt stderr: mlx_whisper hittade inte ffmpeg, hoppade
+        // över filen och avslutade med 0. Felet ska säga varför.
+        let mlxStderr = """
+        Fetching 4 files: 100%|██████████| 4/4 [00:00<00:00, 25497.29it/s]
+        Traceback (most recent call last):
+          File ".../audio.py", line 45, in load_audio
+            out = run(cmd, capture_output=True, check=True).stdout
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        FileNotFoundError: [Errno 2] No such file or directory: 'ffmpeg'
+        Skipping /tmp/jag.wav due to FileNotFoundError: [Errno 2] No such file or directory: 'ffmpeg'
+        """
+        Prov.lika(MlxWhisper.sistaFelraden(Data(mlxStderr.utf8)),
+                  "FileNotFoundError: [Errno 2] No such file or directory: 'ffmpeg'",
+                  "orsaken plockas ur mlx_whispers «Skipping … due to»")
+        Prov.lika(MlxWhisper.sistaFelraden(Data("x\nValueError: kaputt\n".utf8)),
+                  "ValueError: kaputt", "utan Skipping-rad tas sista raden")
+        Prov.lika(MlxWhisper.sistaFelraden(Data()), nil, "tom stderr ger ingen orsak")
+        Prov.kolla(MlxWhisper.miljö["PATH"]?.contains("/opt/homebrew/bin") == true,
+                   "mlx_whisper får Homebrew i PATH, där ffmpeg bor")
         Prov.kolla(Mötesspråk.val.contains { $0.kod == "no" },
                    "norska går att välja — annars är «avgör själv» enda vägen")
         Prov.lika(Mötesspråk.namn(nil), "Avgör själv", "nil är «avgör själv»")

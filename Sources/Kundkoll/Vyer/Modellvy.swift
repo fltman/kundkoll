@@ -296,7 +296,7 @@ struct Modellvy: View {
                 sökväg("Pythonmiljö", text: $pythonMiljö,
                        standard: "~/Projekt/transcriber/venv",
                        hjälp: "venv med torch och speechbrain för röstanalysen, och mlx-whisper "
-                            + "för engelska möten.")
+                            + "för möten på andra språk än svenska.")
                 Text("Tomt betyder standardvägen. Diagnosfliken säger om det som ligger där "
                      + "räcker.")
                     .font(.caption)
@@ -444,7 +444,11 @@ struct Modellvy: View {
         let mlx = fm.isExecutableFile(atPath: MlxWhisper.körbar.path)
         rader.append(Diagnosrad(namn: "mlx_whisper", ok: mlx ? true : nil,
                                 text: mlx ? MlxWhisper.körbar.path
-                                          : "saknas — behövs för engelska möten när KB-Whisper är vald"))
+                                          : "saknas — behövs för andra språk än svenska när KB-Whisper är vald"))
+        let ffmpeg = MlxWhisper.harFfmpeg
+        rader.append(Diagnosrad(namn: "ffmpeg", ok: ffmpeg ? true : nil,
+                                text: ffmpeg ? "finns — mlx_whisper läser ljudet genom den"
+                                             : "saknas — mlx_whisper kan inte läsa ljudet: brew install ffmpeg"))
 
         let ollama = await Insikter().tillgänglig
         rader.append(Diagnosrad(namn: "Ollama", ok: ollama ? true : nil,

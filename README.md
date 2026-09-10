@@ -371,7 +371,7 @@ fönstret först, gör flera försök, och faller tillbaka på hela skärmen.
 
 ```bash
 ./scripts/bygg-app.sh                                        # dist/Bjarbys kundkoll.app
-.build/arm64-apple-macosx/debug/Kundkoll --test              # 635 enhetstester
+.build/arm64-apple-macosx/debug/Kundkoll --test              # 658 enhetstester
 .build/arm64-apple-macosx/debug/Kundkoll --prov-ljud f.wav   # hela kedjan skarpt
 .build/arm64-apple-macosx/debug/Kundkoll --prov-röst ljud.wav w.json facit.json
 .build/arm64-apple-macosx/debug/Kundkoll --prov-import fil.mp4 fil.m4a

@@ -259,9 +259,15 @@ enum Arkivtranskribering {
         case .whisperCpp:
             return Whisper.Sökvägar.standard.brister
         case .mlx:
-            return FileManager.default.isExecutableFile(atPath: MlxWhisper.körbar.path)
-                ? [] : ["mlx_whisper saknas — installera med: "
-                        + "\(MlxWhisper.venv.path)/bin/pip install mlx-whisper"]
+            var brister: [String] = []
+            if !FileManager.default.isExecutableFile(atPath: MlxWhisper.körbar.path) {
+                brister.append("mlx_whisper saknas — installera med: "
+                               + "\(MlxWhisper.venv.path)/bin/pip install mlx-whisper")
+            }
+            if !MlxWhisper.harFfmpeg {
+                brister.append("ffmpeg saknas — mlx_whisper läser ljudet genom den: brew install ffmpeg")
+            }
+            return brister
         case .openai, .elevenlabs:
             return val.motor.nyckel == nil
                 ? ["API-nyckel för \(val.motor.namn) saknas"] : []
@@ -281,6 +287,24 @@ enum MlxWhisper {
     }
     static var körbar: URL { venv.appending(path: "bin/mlx_whisper") }
 
+    /// Miljön mlx_whisper körs i. Den läser ljudet genom ffmpeg och letar
+    /// efter det i PATH — och en app startad från Finder ärver ett PATH
+    /// utan Homebrew. Uppmätt: då hoppade mlx_whisper över filen med ett
+    /// «FileNotFoundError: ffmpeg» på stderr, avslutade med 0 och lämnade
+    /// ingen JSON. Samma tillägg som Kodagent gör för claude.
+    /// Om ffmpeg går att hitta i den PATH mlx_whisper får.
+    static var harFfmpeg: Bool {
+        (miljö["PATH"] ?? "").split(separator: ":").contains {
+            FileManager.default.isExecutableFile(atPath: "\($0)/ffmpeg")
+        }
+    }
+
+    static var miljö: [String: String] {
+        var miljö = ProcessInfo.processInfo.environment
+        miljö["PATH"] = (miljö["PATH"] ?? "/usr/bin:/bin") + ":/opt/homebrew/bin:/usr/local/bin"
+        return miljö
+    }
+
     static func transkribera(fil: URL, röst: Röst, modell: String,
                              språk: String? = "sv",
                              totalLängd: Double?,
@@ -297,6 +321,7 @@ enum MlxWhisper {
 
         let p = Process()
         p.executableURL = körbar
+        p.environment = miljö
         var argument = [fil.path,
                         "--model", modell,
                         "--output-dir", ut.path,
@@ -314,7 +339,11 @@ enum MlxWhisper {
         // samma form som whisper-cli — framstegen läses därifrån.
         let rör = Pipe()
         p.standardOutput = rör
-        p.standardError = FileHandle.nullDevice
+        // stderr sparas: när ingen JSON kommer är sista raden där hela
+        // förklaringen, och utan den stod det bara «ingen utdata».
+        let felrör = Pipe()
+        p.standardError = felrör
+        async let felText = Underprocess.läsAllt(felrör.fileHandleForReading)
         if let vidFramsteg {
             let längd = totalLängd ?? 0
             nonisolated(unsafe) var rest = ""
@@ -343,12 +372,29 @@ enum MlxWhisper {
         let namn = fil.deletingPathExtension().lastPathComponent
         let json = ut.appending(path: "\(namn).json")
         guard let data = try? Data(contentsOf: json) else {
-            throw Enkeltfel("mlx_whisper lämnade ingen utdata.")
+            let orsak = sistaFelraden(await felText)
+            throw Enkeltfel("mlx_whisper lämnade ingen utdata"
+                            + (orsak.map { ": \($0)" } ?? "."))
         }
         return tolka(data, röst: röst)
     }
 
     /// Vilket språk mlx_whisper hör i en kort bit ljud — koden ur JSON:ens
+    /// Den rad i stderr som säger vad som gick fel. Python skriver en hel
+    /// spårning; raden med undantaget står sist, och mlx_whispers eget
+    /// «Skipping … due to …» upprepar den. Förloppsmätare skippas.
+    static func sistaFelraden(_ data: Data) -> String? {
+        guard let text = String(data: data, encoding: .utf8) else { return nil }
+        let rader = text.split(whereSeparator: \.isNewline)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty && !$0.hasPrefix("^") && !$0.contains("it/s]") }
+        if let skip = rader.last(where: { $0.hasPrefix("Skipping ") }),
+           let del = skip.range(of: " due to ") {
+            return String(skip[del.upperBound...])
+        }
+        return rader.last.map { String($0.prefix(300)) }
+    }
+
     /// `language`, eller nil om passet inte gick igenom. Bara en gissning:
     /// den som faller tyst låter motorn avgöra som förr.
     static func språk(i fil: URL) async -> String? {
@@ -361,6 +407,7 @@ enum MlxWhisper {
 
         let p = Process()
         p.executableURL = körbar
+        p.environment = miljö
         p.arguments = [fil.path,
                        "--model", Transkriberingsmotor.mlx.standardmodell,
                        "--output-dir", ut.path,
