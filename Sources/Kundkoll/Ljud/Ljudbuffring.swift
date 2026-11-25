@@ -112,6 +112,7 @@ final class Ljudbuffring {
         talProv = 0
         tystSedanProv = nil
         senasteNivå = 0
+        senasteBlockVarTal = false
         konverterare = nil
         källformat = nil
     }
@@ -162,7 +163,8 @@ final class Ljudbuffring {
             if historik.count > maxHistorik { historik.removeFirst() }
 
             vägdaProv += antal
-            if nivå >= golv() * Self.talfaktor {
+            senasteBlockVarTal = nivå >= golv() * Self.talfaktor
+            if senasteBlockVarTal {
                 talProv += antal
                 tystSedanProv = nil
             } else if tystSedanProv == nil {
@@ -186,6 +188,8 @@ final class Ljudbuffring {
 
     /// Aktuell ljudnivå 0–1, för mätaren i gränssnittet.
     private(set) var senasteNivå: Float = 0
+    /// Om det senast vägda blocket räknades som tal.
+    private(set) var senasteBlockVarTal = false
 
     /// Mätaren är logaritmisk. Linjärt skulle tal från den inbyggda
     /// mikrofonen — RMS omkring 0,01 — knappt synas alls.

@@ -45,6 +45,10 @@ final class Inspelningssession: ObservableObject {
     /// Sätts när livetranskriberingen slutat svara mitt i ett möte — annars
     /// ser en död whisper-server ut precis som tystnad.
     @Published private(set) var livevarning: String?
+    /// Sätts när datorljudet är dött: rena nollor från motpartsspåret
+    /// medan mikrofonen hör mig tala. Se `Ljudvakt`.
+    @Published private(set) var ljudvarning: String?
+    private var ljudvakt = Ljudvakt()
 
     /// Lyssnar efter frågeställningar medan samtalet pågår.
     let liveinsikter = Liveinsikter()
@@ -85,6 +89,8 @@ final class Inspelningssession: ObservableObject {
         default: return
         }
         livevarning = nil
+        ljudvarning = nil
+        ljudvakt = Ljudvakt()
         self.placering = placering
         self.titel = titel.isEmpty ? "Samtal" : titel
         self.mikrofonNamn = mikrofon?.namn
@@ -152,6 +158,12 @@ final class Inspelningssession: ObservableObject {
         switch ram.röst {
         case .jag: nivåJag = b.senasteNivå
         case .motpart: nivåMotpart = b.senasteNivå
+        }
+        let varnar = ljudvakt.tog(röst: ram.röst, tid: ram.tid,
+                                  nollor: Ljudvakt.ärNollor(mono),
+                                  tal: b.senasteBlockVarTal)
+        if varnar != (ljudvarning != nil) {
+            ljudvarning = varnar ? Ljudvakt.varning : nil
         }
 
         guard let f = fönster else { return }
@@ -376,4 +388,54 @@ struct Enkeltfel: LocalizedError {
     let text: String
     init(_ t: String) { text = t }
     var errorDescription: String? { text }
+}
+
+/// Märker när datorljudet är dött.
+///
+/// Motpartsspåret är aldrig exakt noll i ett fungerande möte: mötesappen
+/// skickar ett svagt brus även när ingen talar. Uppmätt den 10 september
+/// 2026, tre möten med AirPods: rena nollor i över trettio minuter medan
+/// mikrofonen hörde mig hela tiden — mötesappens ljud gick en väg
+/// ScreenCaptureKit inte fångade — och det märktes först efteråt, när
+/// transkriptet bara hade min halva. Dagen innan hjälpte det att stoppa
+/// och starta om inspelningen. Vakten säger till medan mötet pågår.
+///
+/// Varningen kräver både nollor och tal: före samtalet är motparten
+/// tyst av naturliga skäl, och den som sitter tyst i ett dött möte får
+/// inget att jämföra med. Den släpps så fort ett riktigt prov kommer.
+struct Ljudvakt {
+    /// Sekunder nollor, medan jag talat under tiden, innan det sägs ifrån.
+    static let gräns: Double = 45
+    static let varning = "Datorljudet är tyst: inget från mötesappen kommer in fast du talar. "
+        + "Kontrollera högtalarvalet i mötesappen, eller stoppa och starta om inspelningen."
+
+    private var nollSedan: Double?
+    private var jagTaladeSenast: Double?
+    private(set) var varnar = false
+
+    /// Om en ljudbit är digitalt tyst. Bakgrundsbrus från en mötesapp
+    /// ligger långt över; Int16-noll i filen motsvarar under 1,5e-5.
+    static func ärNollor(_ prov: [Float]) -> Bool {
+        prov.allSatisfy { abs($0) < 1e-6 }
+    }
+
+    /// Matas med varje bit; ger om varningen ska stå.
+    mutating func tog(röst: Röst, tid: Double, nollor: Bool, tal: Bool) -> Bool {
+        switch röst {
+        case .jag:
+            if tal { jagTaladeSenast = tid }
+        case .motpart:
+            if nollor {
+                if nollSedan == nil { nollSedan = tid }
+            } else {
+                nollSedan = nil
+                varnar = false
+            }
+        }
+        if let n = nollSedan, let j = jagTaladeSenast,
+           tid - n >= Self.gräns, tid - j <= Self.gräns, j > n {
+            varnar = true
+        }
+        return varnar
+    }
 }

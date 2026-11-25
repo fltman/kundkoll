@@ -145,7 +145,7 @@ struct Inspelningsvy: View {
             }
             .padding(.horizontal, 16).padding(.vertical, 12)
             Divider()
-            if let varning = session.livevarning {
+            ForEach([session.ljudvarning, session.livevarning].compactMap { $0 }, id: \.self) { varning in
                 Label(varning, systemImage: "exclamationmark.triangle")
                     .font(.callout)
                     .foregroundStyle(.orange)

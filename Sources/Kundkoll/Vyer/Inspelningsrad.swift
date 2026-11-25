@@ -21,7 +21,7 @@ struct Inspelningsrad: View {
                     Text(session.titel)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
-                    if let varning = session.livevarning {
+                    if let varning = session.ljudvarning ?? session.livevarning {
                         Image(systemName: "exclamationmark.triangle.fill")
                             .foregroundStyle(.orange)
                             .help(varning)

@@ -1498,6 +1498,49 @@ enum Tester {
             ram(0, sekunder, tid, bakgrund: 0)
         }
 
+        do {   // vakten för dött datorljud
+            let b = Ljudbuffring()
+            _ = b.mata(ram(0.05, 1.0, 0))
+            Prov.kolla(b.senasteBlockVarTal, "buffringen säger om senaste blocket var tal")
+            _ = b.mata(tystnad(1.0, 1))
+            Prov.kolla(!b.senasteBlockVarTal, "och när det var tystnad")
+
+            Prov.kolla(Ljudvakt.ärNollor([0, 0, 0]), "rena nollor är nollor")
+            Prov.kolla(!Ljudvakt.ärNollor([0, 0.0001, 0]), "mötesappens brus är det inte")
+
+            var v = Ljudvakt()
+            // Motparten tyst från start, jag talar hela tiden: varning efter gränsen.
+            var varnade: Double?
+            for s in stride(from: 0.0, through: 60, by: 1) {
+                _ = v.tog(röst: .jag, tid: s, nollor: false, tal: true)
+                if v.tog(röst: .motpart, tid: s, nollor: true, tal: false), varnade == nil { varnade = s }
+            }
+            Prov.kolla(varnade != nil && varnade! >= Ljudvakt.gräns,
+                       "nollor medan jag talar ger varning, men först efter gränsen")
+            Prov.kolla(!v.tog(röst: .motpart, tid: 61, nollor: false, tal: false),
+                       "ett riktigt prov från motparten släpper varningen")
+            Prov.kolla(!v.tog(röst: .motpart, tid: 130, nollor: true, tal: false),
+                       "och räkningen börjar om: nya nollor varnar inte direkt")
+
+            var tystJag = Ljudvakt()
+            for s in stride(from: 0.0, through: 120, by: 1) {
+                _ = tystJag.tog(röst: .jag, tid: s, nollor: false, tal: false)
+                Prov.kolla(!tystJag.tog(röst: .motpart, tid: s, nollor: true, tal: false)
+                           || s < 0, "sitter jag också tyst finns inget att varna för")
+            }
+
+            var före = Ljudvakt()
+            // Jag talade i början, sedan tyst i två minuter — varningen ska inte
+            // komma på gammalt tal.
+            for s in stride(from: 0.0, through: 10, by: 1) { _ = före.tog(röst: .jag, tid: s, nollor: false, tal: true) }
+            var senVarning = false
+            for s in stride(from: 11.0, through: 130, by: 1) {
+                _ = före.tog(röst: .jag, tid: s, nollor: false, tal: false)
+                if före.tog(röst: .motpart, tid: s, nollor: true, tal: false) { senVarning = true }
+            }
+            Prov.kolla(!senVarning, "tal som ligger längre bak än gränsen räknas inte")
+        }
+
         do {   // tystnad stänger fönstret
             let b = Ljudbuffring()
             Prov.kolla(b.mata(ram(0.05, 1.0, 0)).fönster == nil, "tal håller fönstret öppet")
