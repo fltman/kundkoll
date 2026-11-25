@@ -76,7 +76,10 @@ struct Huvudvy: View {
         }
     }
 
-    var body: some View {
+    // Kroppen är delad i fyra led. Som en enda kedja med drygt trettio
+    // modifierare gav Swift 6.4 upp typkontrollen («unable to type-check
+    // this expression in reasonable time») och appen gick inte att bygga.
+    private var stomme: some View {
         NavigationSplitView {
             sidopanel
         } detail: {
@@ -100,6 +103,10 @@ struct Huvudvy: View {
                 Tidursrad()
             }
         }
+    }
+
+    private var medBlad: some View {
+        stomme
         .sheet(isPresented: $visaSök) {
             Sökvy { kund in val = .kund(kund) }
         }
@@ -151,6 +158,10 @@ struct Huvudvy: View {
         // ändras, så att flyttade möten följer med och avbokade tystnar.
         .task { planeraBriefingar() }
         .onChange(of: kalender.ändringar) { planeraBriefingar() }
+    }
+
+    private var medDialoger: some View {
+        medBlad
         .sheet(isPresented: $visaNyKund) { nyKundBlad }
         .sheet(isPresented: $visaNyckel) { Modellvy() }
         .sheet(isPresented: $visaOm) { Omvy() }
@@ -173,6 +184,10 @@ struct Huvudvy: View {
                      + "Uppgifterna blir kvar hos kunden, utan projekt.")
             }
         }
+    }
+
+    var body: some View {
+        medDialoger
         // Ett projekt som väljs någon annanstans ifrån — paletten, sökningen,
         // en notis, kundens översikt eller ett namnbyte — fäller ut sin gren.
         // Sedan är det bara pilen som stänger den igen.

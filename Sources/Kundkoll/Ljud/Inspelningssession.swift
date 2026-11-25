@@ -72,6 +72,15 @@ final class Inspelningssession: ObservableObject {
     private var språk: String? = "sv"
     private var start = Date()
     private var klocka: Timer?
+    /// Håller skärmen vaken medan inspelningen pågår.
+    ///
+    /// ScreenCaptureKit fångar ljudet genom en skärmström, och när skärmen
+    /// somnar stänger systemet strömmen — inspelningen tar då slut mitt i
+    /// mötet. Uppmätt den 24 november 2026: fyra möten i rummet, på batteri
+    /// med skärmvila efter 2 minuter, slutade alla 10 s efter «Will Dim»,
+    /// med SCStreamError -3808. Teamsmöten märkte det aldrig, för där håller
+    /// Teams skärmen vaken; ett möte i rummet har ingen som gör det.
+    private var vakenhet: NSObjectProtocol?
     /// En transkribering i taget per spår, annars hamnar raderna i oordning.
     private var köer: [Röst: Task<Void, Never>] = [:]
 
@@ -127,6 +136,7 @@ final class Inspelningssession: ObservableObject {
             for (_, b) in buffring { b.nollställ() }
             infångning.vidRam = { [weak self] ram in self?.tog(ram) }
             infångning.vidFel = { [weak self] fel in self?.avbröt(fel) }
+            hållVaken()
             try await infångning.starta(mikrofonID: mikrofon?.id)
 
             läge = .spelarIn
@@ -212,6 +222,7 @@ final class Inspelningssession: ObservableObject {
         let slut = Date().timeIntervalSince(start)
 
         await infångning.stoppa()
+        släppVakenhet()
 
         // Ta hand om det som ligger kvar i buffertarna.
         for (röst, b) in buffring {
@@ -319,9 +330,23 @@ final class Inspelningssession: ObservableObject {
         }
     }
 
+    private func hållVaken() {
+        guard vakenhet == nil else { return }
+        // .userInitiated hindrar också att datorn somnar av sig själv.
+        vakenhet = ProcessInfo.processInfo.beginActivity(
+            options: [.userInitiated, .idleDisplaySleepDisabled],
+            reason: "\(Appnamn.visat) spelar in ett möte")
+    }
+
+    private func släppVakenhet() {
+        if let v = vakenhet { ProcessInfo.processInfo.endActivity(v) }
+        vakenhet = nil
+    }
+
     private func städa() async {
         klocka?.invalidate(); klocka = nil
         await infångning.stoppa()
+        släppVakenhet()
         for (_, s) in skrivare { s.stäng() }
         skrivare.removeAll()
         await whisper.stoppaServer()
