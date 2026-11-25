@@ -206,6 +206,12 @@ actor Chatt {
             guard rad.hasPrefix("data:") else { continue }
             let nytto = rad.dropFirst(5).trimmingCharacters(in: .whitespaces)
             if nytto == "[DONE]" { break }
+            // Fel kan komma mitt i en ström som började med 200: Anthropics
+            // «overloaded», OpenRouters {"error": …}. Tidigare ignorerades de,
+            // och ett avbrutet svar sparades som om det vore färdigt.
+            if let fel = Self.strömfel(nytto) {
+                throw Fel.frånTjänsten(http.statusCode, fel + " Försök igen om en stund.")
+            }
             let bit = val.leverantör.talarAnthropic
                 ? Self.deltaAnthropic(Data(nytto.utf8))
                 : Self.deltaOpenAI(Data(nytto.utf8))
@@ -336,6 +342,17 @@ actor Chatt {
                                  källa: t.källa, datum: t.tid))
         }
         return ut
+    }
+
+    /// Felet i en strömhändelse, om händelsen är ett fel.
+    static func strömfel(_ nytto: String) -> String? {
+        guard let data = nytto.data(using: .utf8),
+              let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+        else { return nil }
+        guard obj["type"] as? String == "error" || obj["error"] != nil else { return nil }
+        if let e = obj["error"] as? [String: Any], let m = e["message"] as? String { return m }
+        if let m = obj["error"] as? String { return m }
+        return felmeddelande(data)
     }
 
     private static func felmeddelande(_ data: Data) -> String {

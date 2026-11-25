@@ -34,6 +34,7 @@ enum Tester {
         anteckningar()
         obsidian()
         kunskapsbanken()
+        granskningen()
         return Prov.sammanfatta()
     }
 
@@ -2926,6 +2927,126 @@ extension Tester {
         for t in ["Tack till er alla för insatsen i förra veckan, det gick bra.",
                   "Vi tackar för offerten och återkommer."] {
             Prov.kolla(!Whisper.ärTomtLjud(t), "«\(t)» behålls")
+        }
+    }
+
+    // MARK: - Granskningen 25 november 2026
+
+    static func granskningen() {
+        Prov.svit("Granskningen")
+        let fm = FileManager.default
+
+        do {   // mikrofonen som inte ger något alls
+            var v = Mikrofonvakt()
+            for s in stride(from: 0.0, through: 7, by: 0.5) { v.tog(tid: s, nollor: true) }
+            Prov.kolla(!v.varnar, "sju sekunder nollor är ännu inget larm")
+            v.tog(tid: 8.5, nollor: true)
+            Prov.kolla(v.varnar, "åtta sekunder nollor ger larm")
+            v.tog(tid: 9, nollor: false)
+            Prov.kolla(!v.varnar, "och ett riktigt prov släpper det")
+            Prov.kolla(Mikrofonvakt.varning("Microsoft Teams Audio").contains("«Microsoft Teams Audio»"),
+                       "varningen nämner mikrofonen")
+        }
+
+        do {   // förvalet tar aldrig en virtuell mikrofon i onödan
+            let teams = Ljudinfångning.Mikrofon(id: "teams", namn: "Microsoft Teams Audio", virtuell: true)
+            let inbyggd = Ljudinfångning.Mikrofon(id: "bltn", namn: "MacBook Pro Microphone")
+            Prov.lika(Ljudinfångning.förval(bland: [teams, inbyggd], sparad: "teams")?.id, "bltn",
+                      "senast vald men virtuell — den riktiga väljs")
+            Prov.lika(Ljudinfångning.förval(bland: [teams, inbyggd], sparad: "bltn")?.id, "bltn",
+                      "senast vald och riktig — den väljs")
+            Prov.lika(Ljudinfångning.förval(bland: [teams], sparad: "")?.id, "teams",
+                      "finns bara en virtuell får man den hellre än ingen")
+            Prov.lika(teams.visatNamn, "Microsoft Teams Audio (virtuell)", "virtuella märks i väljaren")
+        }
+
+        do {   // en trasig post tar inte med sig hela listan
+            let json = #"[{"vad":"A"},{"vad":5},{"vad":"C"}]"#
+            let l = try? JSONDecoder.kundkoll.decode(TåligLista<Uppgift>.self, from: Data(json.utf8))
+            Prov.lika(l?.värden.map(\.vad), ["A", "C"], "den trasiga hoppas över, resten blir kvar")
+            let okänt = #"[{"vad":"A","läge":"påhittat","ursprung":"påhittat"}]"#
+            let u = try? JSONDecoder.kundkoll.decode([Uppgift].self, from: Data(okänt.utf8))
+            Prov.lika(u?.first?.läge, .attGöra, "ett okänt läge blir «att göra» i stället för att fälla uppgiften")
+        }
+
+        do {   // och nästa sparning raderar inte det som inte gick att läsa
+            let (arkiv, rot) = tillfälligt()
+            defer { try? fm.removeItem(at: rot) }
+            let kund = try! arkiv.skapaKund(namn: "Acme")
+            let fil = kund.mapp.appending(path: "uppgifter.json")
+            try! Data(#"[{"vad":"Gammal"},{"vad":5}]"#.utf8).write(to: fil)
+            Prov.lika(arkiv.uppgifter(för: kund).map(\.vad), ["Gammal"], "det läsbara syns")
+            try! arkiv.läggTill([Uppgift(vad: "Ny", ursprung: .egen)], för: kund)
+            let kopior = (try? fm.contentsOfDirectory(atPath: kund.mapp.path))?
+                .filter { $0.hasPrefix("uppgifter.oläslig-") } ?? []
+            Prov.lika(kopior.count, 1, "filen läggs undan innan den skrivs över")
+            if let k = kopior.first,
+               let text = try? String(contentsOf: kund.mapp.appending(path: k), encoding: .utf8) {
+                Prov.kolla(text.contains(#""vad":5"#), "kopian har den post som inte gick att läsa")
+            }
+            Prov.lika(Set(arkiv.uppgifter(för: kund).map(\.vad)), ["Gammal", "Ny"], "och listan har båda")
+            try! arkiv.läggTill([Uppgift(vad: "Tredje", ursprung: .egen)], för: kund)
+            let efteråt = (try? fm.contentsOfDirectory(atPath: kund.mapp.path))?
+                .filter { $0.hasPrefix("uppgifter.oläslig-") }.count ?? 0
+            Prov.lika(efteråt, 1, "en hel fil läggs inte undan i onödan")
+        }
+
+        do {   // ett yttrande med luckor fäller inte inspelningen
+            let json = #"{"röst":"någon","text":"Hej"}"#
+            let y = try? JSONDecoder.kundkoll.decode(Yttrande.self, from: Data(json.utf8))
+            Prov.kolla(y != nil, "saknade tider och okänd röst går att läsa")
+            Prov.lika(y?.text, "Hej", "med texten kvar")
+            let rundtur = try? JSONDecoder.kundkoll.decode(
+                Yttrande.self, from: JSONEncoder.kundkoll.encode(
+                    Yttrande(röst: .jag, text: "A", röstgrupp: 2, start: 1, slut: 2)))
+            Prov.lika(rundtur?.röstgrupp, 2, "ett helt yttrande klarar rundturen")
+        }
+
+        do {   // fel mitt i en chattström
+            Prov.kolla(Chatt.strömfel(#"{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}"#)
+                       == "Overloaded", "Anthropics felhändelse känns igen")
+            Prov.kolla(Chatt.strömfel(#"{"error":{"message":"Rate limited","code":429}}"#)
+                       == "Rate limited", "OpenRouters fel efter 200 likaså")
+            Prov.kolla(Chatt.strömfel(#"{"type":"content_block_delta","delta":{"text":"hej"}}"#) == nil,
+                       "en vanlig bit är inget fel")
+            Prov.kolla(Chatt.strömfel("inte json") == nil, "och skräp är det inte heller")
+        }
+
+        do {   // varje tillfälle av ett återkommande möte är för sig
+            let nu = Date()
+            let a = Kalendern.Möte(id: "serie", titel: "Avstämning", start: nu, slut: nu,
+                                   deltagare: [], plats: nil, möteslänk: nil)
+            var b = a
+            b.start = nu.addingTimeInterval(7 * 86400)
+            Prov.kolla(a.förekomst != b.förekomst, "två veckor ger två tillfällen")
+            Prov.lika(a.id, b.id, "men samma serie för möteskopplingarna")
+        }
+
+        do {   // namnbyten som inte ändrar mappnamnet ger ingen «… 2»
+            let (arkiv, rot) = tillfälligt()
+            defer { try? fm.removeItem(at: rot) }
+            let kund = try! arkiv.skapaKund(namn: "Acme")
+            let mapp = try! arkiv.nyInspelningsmapp(placering: .kund(kund), titel: "Cloud - AI", datum: Date())
+            try! arkiv.spara(Inspelning(titel: "Cloud - AI", inledd: Date(), längd: 5, kund: "Acme",
+                                        projekt: nil, mikrofon: nil, liveYttranden: [],
+                                        arkivYttranden: nil), i: mapp)
+            let (i1, m1) = arkiv.inspelningar(för: kund).first!
+            let (_, m2) = try! arkiv.döpOm(i1, i: m1, till: "Cloud / AI", hos: kund)
+            Prov.kolla(!m2.lastPathComponent.hasSuffix(" 2"), "titel som städas till samma mappnamn flyttar inte")
+            let (i3, m3) = arkiv.inspelningar(för: kund).first!
+            let (_, m4) = try! arkiv.döpOm(i3, i: m3, till: "cloud - ai", hos: kund)
+            Prov.kolla(m4.lastPathComponent.hasSuffix("cloud - ai"), "bara skiftläget går att byta")
+            Prov.lika(arkiv.inspelningar(för: kund).count, 1, "och mötet finns kvar, en gång")
+            let (i5, m5) = arkiv.inspelningar(för: kund).first!
+            let (_, m6) = try! arkiv.flytta(i5, från: m5, till: .kund(kund), hos: kund)
+            Prov.kolla(!m6.lastPathComponent.hasSuffix(" 2"), "flytt till där det redan ligger gör ingenting")
+        }
+
+        do {   // mätarna ritar inte om oftare än ögat ser
+            let m = Mätning()
+            m.visa(jag: 0.5)
+            m.visa(jag: 0.9)
+            Prov.lika(m.jag, 0.5, "en andra nivå inom en femtondels sekund väntar")
         }
     }
 }

@@ -57,7 +57,9 @@ enum Notiser {
                 let delar = Calendar.current.dateComponents(
                     [.year, .month, .day, .hour, .minute], from: när)
                 central.add(UNNotificationRequest(
-                    identifier: "brief-\(m.id)",
+                    // Per tillfälle: med seriens id ersatte varje veckas
+                    // bokning den förra, och bara sista veckan fick en notis.
+                    identifier: "brief-\(m.förekomst)",
                     content: innehåll,
                     trigger: UNCalendarNotificationTrigger(dateMatching: delar, repeats: false)))
             }

@@ -49,7 +49,7 @@ struct Briefingvy: View {
                     .disabled(session.pågår)
                 }
                 Spacer()
-                Button("Stäng") { stäng() }.keyboardShortcut(.defaultAction)
+                Button("Stäng") { stäng() }.keyboardShortcut(.cancelAction)
                     .accessibilityIdentifier("brief.stäng")
             }
             .padding(16)

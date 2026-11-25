@@ -88,6 +88,10 @@ struct Huvudvy: View {
                 if visaChatt, let kund = valdKund {
                     Divider()
                     Chattpanel(kund: kund, projekt: val?.projekt)
+                        // Utan id behöll panelen förra kundens kunskapsbank
+                        // och samtal när man bytte kund med chatten öppen —
+                        // frågan besvarades ur A:s material och sparades hos B.
+                        .id(kund.id + "|" + (val?.projekt?.id ?? ""))
                         .frame(width: 380)
                         .transition(AnyTransition.move(edge: .trailing))
                 }
@@ -212,9 +216,20 @@ struct Huvudvy: View {
         .onReceive(NotificationCenter.default.publisher(for: .nyKund)) { _ in visaNyKund = true }
         .onReceive(NotificationCenter.default.publisher(for: .sök)) { _ in visaSök = true }
         .onReceive(NotificationCenter.default.publisher(for: .visaNyckel)) { _ in visaNyckel = true }
+        .onReceive(NotificationCenter.default.publisher(for: .spelaIn)) { _ in
+            if session.pågår { Inspelningsfönster.visa() }
+            else if let kund = valdKund { starta(kund: kund) }
+        }
         .onAppear {
             if val == nil, let första = arkiv.kunder.first { val = .kund(första) }
         }
+    }
+
+    /// Namnbyte och papperskorg flyttar mappar som en pågående inspelning
+    /// eller ett arkivpass skriver till. Gjordes det mitt i ett möte föll
+    /// sparningen, och livetranskriptet gick förlorat.
+    private var upptagen: Bool {
+        session.pågår || session.läge == .avslutar || session.efterbearbetar || Importkö.delad.pågår
     }
 
     /// Kundens rad: sigillet gör att samma kund ser likadan ut överallt.
@@ -225,21 +240,29 @@ struct Huvudvy: View {
         }
         .padding(.vertical, 2)
         .contextMenu {
-            Button("Byt namn …") { namnbyte = .kund(kund) }
+            Button("Byt namn …") { namnbyte = .kund(kund) }.disabled(upptagen)
             Button("Visa i Finder") { NSWorkspace.shared.open(kund.mapp) }
             Divider()
             Button("Flytta till papperskorgen …", role: .destructive) { attKasta = .kund(kund) }
+                .disabled(upptagen)
+            if upptagen {
+                Text("Går inte medan en inspelning eller bearbetning pågår")
+            }
         }
     }
 
     private func projektrad(_ p: Projekt, hos kund: Kund) -> some View {
         Label(p.namn, systemImage: "folder")
             .contextMenu {
-                Button("Byt namn …") { namnbyte = .projekt(p, kund) }
+                Button("Byt namn …") { namnbyte = .projekt(p, kund) }.disabled(upptagen)
                 Button("Visa i Finder") { NSWorkspace.shared.open(p.mapp) }
                 Divider()
                 Button("Flytta till papperskorgen …", role: .destructive) {
                     attKasta = .projekt(p, kund)
+                }
+                .disabled(upptagen)
+                if upptagen {
+                    Text("Går inte medan en inspelning eller bearbetning pågår")
                 }
             }
     }
@@ -290,8 +313,10 @@ struct Huvudvy: View {
                 par.append((kund.namn, m))
             }
         }
-        guard !par.isEmpty else { return }
-        Notiser.begär()
+        // Även en tom lista ska fram: planeraBriefingar tar bort de
+        // påminnelser som inte längre gäller. Avbokades veckans sista
+        // kundmöte kom «Om en kvart: …» annars ändå.
+        if !par.isEmpty { Notiser.begär() }
         Notiser.planeraBriefingar(för: par)
     }
 
@@ -426,8 +451,22 @@ struct Huvudvy: View {
         }
     }
 
+    /// Från verktygsraden eller ⌘⇧R. Pågår ett av kundens möten, eller börjar
+    /// det inom tio minuter, följer det med — titel och kallade — precis som
+    /// när man startar från mötesraden.
     private func starta(kund: Kund) {
-        Inspelningsfönster.öppna(kund: kund, projekt: val?.projekt, möte: nil)
+        Inspelningsfönster.öppna(kund: kund, projekt: val?.projekt, möte: aktuelltMöte(för: kund))
+    }
+
+    private func aktuelltMöte(för kund: Kund) -> Kalendern.Möte? {
+        guard kalender.harTillgång else { return nil }
+        let snart = Date().addingTimeInterval(10 * 60)
+        let kontakter = arkiv.kontakter(för: kund)
+        let kopplade = arkiv.möteskopplingar(för: kund)
+        return kalender.möten(tillDagar: 1)
+            .filter { $0.start <= snart && $0.slut >= Date() }
+            .filter { kopplade[$0.id] != nil || Kalendern.hör($0, till: kund, kontakter: kontakter) }
+            .min { abs($0.start.timeIntervalSinceNow) < abs($1.start.timeIntervalSinceNow) }
     }
 
     // MARK: - Ny kund
@@ -442,6 +481,7 @@ struct Huvudvy: View {
             HStack {
                 Spacer()
                 Button("Avbryt") { visaNyKund = false; nyttKundnamn = "" }
+                    .keyboardShortcut(.cancelAction)
                 Button("Skapa", action: skapa)
                     .keyboardShortcut(.defaultAction)
                     .disabled(nyttKundnamn.trimmingCharacters(in: .whitespaces).isEmpty)

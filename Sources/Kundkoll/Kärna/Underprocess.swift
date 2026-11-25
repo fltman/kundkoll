@@ -52,12 +52,21 @@ enum Underprocess {
         async let utData = läsAllt(ut.fileHandleForReading)
         async let felData = läsAllt(fel.fileHandleForReading)
 
-        try await väntaIn(p, tidsgräns: tidsgräns) {
-            guard let in_, let indata else { return }
-            DispatchQueue.global(qos: .utility).async {
-                in_.fileHandleForWriting.write(indata)
-                try? in_.fileHandleForWriting.close()
+        do {
+            try await väntaIn(p, tidsgräns: tidsgräns) {
+                guard let in_, let indata else { return }
+                DispatchQueue.global(qos: .utility).async {
+                    in_.fileHandleForWriting.write(indata)
+                    try? in_.fileHandleForWriting.close()
+                }
             }
+        } catch {
+            // Startade processen aldrig ligger rörens skrivändar kvar öppna
+            // här, läsarna ovan får aldrig slut på filen, och `kör` hängde
+            // för evigt i väntan på dem.
+            try? ut.fileHandleForWriting.close()
+            try? fel.fileHandleForWriting.close()
+            throw error
         }
         return Utfall(kod: p.terminationStatus, ut: await utData, fel: await felData)
     }

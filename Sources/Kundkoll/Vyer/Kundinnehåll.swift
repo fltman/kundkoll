@@ -541,6 +541,7 @@ struct Kundinnehåll: View {
             HStack {
                 Spacer()
                 Button("Avbryt") { visaNyttProjekt = false; nyttProjektnamn = "" }
+                    .keyboardShortcut(.cancelAction)
                 Button("Skapa", action: skapaProjekt)
                     .keyboardShortcut(.defaultAction)
                     .disabled(nyttProjektnamn.trimmingCharacters(in: .whitespaces).isEmpty)
@@ -819,7 +820,7 @@ struct Inspelningslista: View {
     }
 
     private func bearbetas(_ mapp: URL) -> Bool {
-        session.bearbetadMapp == mapp || kö.gäller(mapp)
+        session.bearbetar(mapp) || kö.gäller(mapp)
     }
 
     /// Kundnivån, kundens projekt, och andra kunder med sina projekt. Ett
@@ -855,17 +856,17 @@ struct Inspelningslista: View {
 
     /// Var bearbetningen står, för raden vars inspelning just nu jobbas på.
     private func pågår(_ mapp: URL) -> String? {
-        if session.bearbetadMapp == mapp {
+        if session.bearbetar(mapp) {
             if session.sammanfattar { return "Sammanfattar …" }
             if session.analyserarRöster { return "Delar upp röster …" }
             if session.efterbearbetar {
                 return "Transkriberar \(Int(session.efterbearbetningsandel * 100)) % …"
             }
         }
-        if kö.aktuellMapp == mapp {
+        if kö.ärAktuell(mapp) {
             return kö.andel.map { "\(kö.steg) \(Int($0 * 100)) % …" } ?? "\(kö.steg) …"
         }
-        if kö.väntande.contains(where: { $0.mapp == mapp }) { return "I kö …" }
+        if kö.väntar(mapp) { return "I kö …" }
         return nil
     }
 
@@ -946,7 +947,7 @@ struct Mötesplockare: View {
             Divider()
             HStack {
                 Spacer()
-                Button("Stäng") { stäng() }.keyboardShortcut(.defaultAction)
+                Button("Stäng") { stäng() }.keyboardShortcut(.cancelAction)
             }
             .padding(16)
         }

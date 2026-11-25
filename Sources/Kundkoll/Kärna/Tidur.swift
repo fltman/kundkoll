@@ -125,8 +125,22 @@ final class Tidur: ObservableObject {
         guard sekunder >= 30 else { return nil }   // kortare är ett felklick
         let post = Tidspost(vad: p.vad.isEmpty ? "Arbete" : p.vad,
                             projekt: p.projekt, start: p.start, sekunder: sekunder)
-        if let kund = Arkivet.shared.kunder.first(where: { $0.namn == p.kund }) {
-            try? Arkivet.shared.läggTill(post, för: kund)
+        // Felet sväljdes tidigare: döptes kunden om medan uret gick fanns den
+        // inte längre under det namnet, och tiden försvann utan ett ord.
+        let minuter = Int((sekunder / 60).rounded())
+        guard let kund = Arkivet.shared.kunder.first(where: { $0.namn == p.kund }) else {
+            Notiser.skicka(titel: "Tiden kunde inte sparas",
+                           text: "\(minuter) min «\(post.vad)» hör till \(p.kund), som inte "
+                               + "finns längre. Lägg in tiden för hand under kundens Tid-flik.")
+            return nil
+        }
+        do {
+            try Arkivet.shared.läggTill(post, för: kund)
+        } catch {
+            Notiser.skicka(titel: "Tiden kunde inte sparas",
+                           text: "\(minuter) min «\(post.vad)» hos \(kund.namn): "
+                               + error.localizedDescription, kund: kund.namn)
+            return nil
         }
         return post
     }

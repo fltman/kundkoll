@@ -371,20 +371,21 @@ fönstret först, gör flera försök, och faller tillbaka på hela skärmen.
 
 ```bash
 ./scripts/bygg-app.sh                                        # dist/Bjarbys kundkoll.app
-.build/arm64-apple-macosx/debug/Kundkoll --test              # 787 enhetstester
-.build/arm64-apple-macosx/debug/Kundkoll --prov-ljud f.wav   # hela kedjan skarpt
-.build/arm64-apple-macosx/debug/Kundkoll --prov-röst ljud.wav w.json facit.json
-.build/arm64-apple-macosx/debug/Kundkoll --prov-import fil.mp4 fil.m4a
-.build/arm64-apple-macosx/debug/Kundkoll --prov-chatt [leverantör] [modell]
-.build/arm64-apple-macosx/debug/Kundkoll --prov-bilaga fil.pdf bild.png
-.build/arm64-apple-macosx/debug/Kundkoll --prov-omröst <inspelningsmapp> [antal]
-.build/arm64-apple-macosx/debug/Kundkoll --prov-kodagent <mapp> "<fråga>"
-.build/arm64-apple-macosx/debug/Kundkoll --prov-insikter [modell …]
-.build/arm64-apple-macosx/debug/Kundkoll --prov-datum   # relativa uttryck → riktiga datum
-.build/arm64-apple-macosx/debug/Kundkoll --prov-transkribering f.wav [motor] [modell]
-.build/arm64-apple-macosx/debug/Kundkoll --prov-läget <kund> <projekt>   # lägesbilden skarpt
-.build/arm64-apple-macosx/debug/Kundkoll --prov-bilagehämtning <adress> [mapp]
-.build/arm64-apple-macosx/debug/Kundkoll --transkribera-om <mapp> [sv|en|auto]
+K=$(swift build --show-bin-path)/Kundkoll                    # var binären hamnar beror på Swift-versionen
+$K --test              # 816 enhetstester
+$K --prov-ljud f.wav   # hela kedjan skarpt
+$K --prov-röst ljud.wav w.json facit.json
+$K --prov-import fil.mp4 fil.m4a
+$K --prov-chatt [leverantör] [modell]
+$K --prov-bilaga fil.pdf bild.png
+$K --prov-omröst <inspelningsmapp> [antal]
+$K --prov-kodagent <mapp> "<fråga>"
+$K --prov-insikter [modell …]
+$K --prov-datum   # relativa uttryck → riktiga datum
+$K --prov-transkribering f.wav [motor] [modell]
+$K --prov-läget <kund> <projekt>   # lägesbilden skarpt
+$K --prov-bilagehämtning <adress> [mapp]
+$K --transkribera-om <mapp> [sv|en|auto]
 ```
 
 Xcode behövs inte — Command Line Tools räcker. Appen signeras med Developer ID

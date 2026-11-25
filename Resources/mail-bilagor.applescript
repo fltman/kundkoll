@@ -26,7 +26,7 @@ on run argv
 				try
 					set lada to mailbox (ladnamn as string) of konto
 					if (ladnamn as string) is "INBOX" then
-						set traffar to (every message of lada whose sender contains adress)
+						set traffar to (every message of lada whose sender contains ("<" & adress & ">") or sender is adress)
 					else
 						set traffar to (every message of lada whose (address of every to recipient) contains adress)
 					end if
@@ -45,7 +45,9 @@ on run argv
 									-- bort har och inte forst i Swift, annars
 									-- raknas de mot kvoten.
 									if stl < 26214400 and my varAttSpara(namn) then
-										set malfil to malmapp & "/" & namn
+										-- Mejlets id forst: manadsfakturor heter ofta
+										-- alla "Faktura.pdf" och skrev annars over varandra.
+										set malfil to malmapp & "/" & ((id of m) as string) & "-" & namn
 										save b in POSIX file malfil
 										set raknare to raknare + 1
 										set ut to ut & (subject of m) & d & namn & d & malfil & d & (stl as string) & linefeed

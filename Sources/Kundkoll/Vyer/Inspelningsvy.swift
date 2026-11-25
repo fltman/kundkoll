@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import AVFoundation
 
 /// Innehållet i inspelningsfönstret.
 ///
@@ -47,14 +48,17 @@ struct Inspelningsvy: View {
 
     private func förbered() {
         mikrofoner = Ljudinfångning.mikrofoner()
-        valdMikrofon = mikrofoner.first { $0.id == sparadMikrofon } ?? mikrofoner.first
+        valdMikrofon = Ljudinfångning.förval(bland: mikrofoner, sparad: sparadMikrofon)
         projektlista = arkiv.projekt(för: kund)
         valtProjekt = projekt
         språk = sparatSpråk == "auto" ? nil : sparatSpråk
         if titel.isEmpty { titel = möte?.titel ?? "" }
 
-        // Startat från ett möte: allt som behövs är redan känt.
-        if möte != nil, case .vilande = session.läge, valdMikrofon != nil {
+        // Startat från ett möte: allt som behövs är redan känt — men bara
+        // om mikrofonen är den man valde sist och en riktig. Annars visas
+        // formuläret, så att man ser vad som kommer att spela in.
+        if möte != nil, case .vilande = session.läge,
+           let m = valdMikrofon, m.id == sparadMikrofon, !m.virtuell {
             starta()
         }
     }
@@ -83,7 +87,22 @@ struct Inspelningsvy: View {
                       + "KB-Whisper översätter allt till svenska, så andra språk "
                       + "än svenska tar arkivvägen via MLX eller molnet.")
                 Picker("Mikrofon", selection: $valdMikrofon) {
-                    ForEach(mikrofoner) { m in Text(m.namn).tag(Ljudinfångning.Mikrofon?.some(m)) }
+                    ForEach(mikrofoner) { m in Text(m.visatNamn).tag(Ljudinfångning.Mikrofon?.some(m)) }
+                }
+                // Ett headset som kopplas in medan fönstret står öppet ska synas.
+                .onReceive(NotificationCenter.default.publisher(for: AVCaptureDevice.wasConnectedNotification)) { _ in
+                    läsOmMikrofoner()
+                }
+                .onReceive(NotificationCenter.default.publisher(for: AVCaptureDevice.wasDisconnectedNotification)) { _ in
+                    läsOmMikrofoner()
+                }
+                if valdMikrofon?.virtuell == true {
+                    Label("En virtuell mikrofon hör bara det en annan app skickar till den, "
+                          + "inte rummet. För ett möte på plats: välj den inbyggda.",
+                          systemImage: "exclamationmark.triangle")
+                        .font(.callout)
+                        .foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
             .formStyle(.grouped)
@@ -109,6 +128,7 @@ struct Inspelningsvy: View {
                     session.återställ()
                     Inspelningsfönster.stäng()
                 }
+                .keyboardShortcut(.cancelAction)
                 .accessibilityIdentifier("inspelning.avbryt")
                 Spacer()
                 Button(action: starta) {
@@ -136,12 +156,13 @@ struct Inspelningsvy: View {
         VStack(spacing: 0) {
             HStack(spacing: 12) {
                 Circle().fill(.red).frame(width: 9, height: 9).symbolEffect(.pulse)
-                Text(formateraLängd(session.förfluten))
-                    .font(.title3.monospacedDigit())
+                Inspelningsklocka(mätning: session.mätning, font: .title3)
                 Text(session.titel).foregroundStyle(.secondary).lineLimit(1)
+                if let m = session.mikrofonNamn {
+                    Label(m, systemImage: "mic").font(.caption).foregroundStyle(.tertiary).lineLimit(1)
+                }
                 Spacer()
-                mätare("Jag", session.nivåJag, .blue)
-                mätare("Motpart", session.nivåMotpart, .purple)
+                Nivåmätare(mätning: session.mätning, bredd: 50, etiketter: true)
             }
             .padding(.horizontal, 16).padding(.vertical, 12)
             Divider()
@@ -191,7 +212,9 @@ struct Inspelningsvy: View {
                 } label: {
                     Label("Stoppa", systemImage: "stop.fill")
                 }
-                .keyboardShortcut(.defaultAction)
+                // Inte Return: Return efter en markering i transkriptet
+                // avslutade mötet utan fråga. ⌘. ligger i menyn Inspelning.
+                .help("Stoppa inspelningen (⌘.)")
                 .accessibilityIdentifier("inspelning.stoppa")
                 .disabled(session.läge == .avslutar)
             }
@@ -199,14 +222,10 @@ struct Inspelningsvy: View {
         }
     }
 
-    private func mätare(_ namn: String, _ nivå: Float, _ färg: Color) -> some View {
-        HStack(spacing: 6) {
-            Text(namn).font(.caption).foregroundStyle(.secondary)
-            Capsule().fill(.quaternary).frame(width: 50, height: 4)
-                .overlay(alignment: .leading) {
-                    Capsule().fill(färg).frame(width: 50 * CGFloat(min(1, nivå)), height: 4)
-                }
-        }
+    private func läsOmMikrofoner() {
+        mikrofoner = Ljudinfångning.mikrofoner()
+        if let v = valdMikrofon, mikrofoner.contains(v) { return }
+        valdMikrofon = Ljudinfångning.förval(bland: mikrofoner, sparad: sparadMikrofon)
     }
 
     private func rad(_ y: Yttrande) -> some View {
@@ -230,9 +249,19 @@ struct Inspelningsvy: View {
 
     private func klar(_ mapp: URL) -> some View {
         VStack(spacing: 16) {
-            Image(systemName: "checkmark.circle").font(.system(size: 44)).foregroundStyle(.green)
+            Image(systemName: session.avbrottsorsak == nil ? "checkmark.circle" : "exclamationmark.circle")
+                .font(.system(size: 44))
+                .foregroundStyle(session.avbrottsorsak == nil ? .green : .orange)
             Text("Inspelningen är sparad").font(.title3.weight(.semibold))
             Text(mapp.lastPathComponent).font(.callout).foregroundStyle(.secondary)
+            if let orsak = session.avbrottsorsak {
+                Text(orsak)
+                    .font(.callout)
+                    .foregroundStyle(.orange)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: 380)
+            }
 
             if session.efterbearbetar {
                 VStack(spacing: 8) {

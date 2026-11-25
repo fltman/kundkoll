@@ -78,7 +78,7 @@ struct Transkriptvy: View {
                     }
                     Spacer()
                     Button("Stäng") { stäng() }
-                        .keyboardShortcut(.defaultAction)
+                        .keyboardShortcut(.cancelAction)
                         .accessibilityIdentifier("möte.stäng")
                 }
                 .padding(16)
@@ -536,11 +536,11 @@ struct Transkriptvy: View {
 
     /// Var en omkörning av det här mötet står, om en pågår.
     private var körOmSteg: String? {
-        if kö.aktuellMapp == mapp {
+        if kö.ärAktuell(mapp) {
             return kö.andel.map { "\(kö.steg) · \(Int($0 * 100)) %" } ?? kö.steg
         }
-        if kö.väntande.contains(where: { $0.mapp == mapp }) { return "I kö …" }
-        if session.bearbetadMapp == mapp { return "Efterbearbetas …" }
+        if kö.väntar(mapp) { return "I kö …" }
+        if session.bearbetar(mapp) { return "Efterbearbetas …" }
         return nil
     }
 

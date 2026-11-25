@@ -39,7 +39,7 @@ struct Omvy: View {
 
             Button("Stäng") { stäng() }
                 .accessibilityIdentifier("om.stäng")
-                .keyboardShortcut(.defaultAction)
+                .keyboardShortcut(.cancelAction)
                 .padding(.top, 4)
         }
         .padding(28)

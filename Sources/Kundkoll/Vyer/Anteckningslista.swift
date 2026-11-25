@@ -98,6 +98,7 @@ struct Anteckningslista: View {
             HStack {
                 Spacer()
                 Button("Avbryt") { visaNy = false; nyRubrik = "" }
+                    .keyboardShortcut(.cancelAction)
                 Button("Skapa", action: skapa).keyboardShortcut(.defaultAction)
             }
         }

@@ -22,9 +22,11 @@ final class Inspelningssession: ObservableObject {
 
     @Published private(set) var läge: Läge = .vilande
     @Published private(set) var yttranden: [Yttrande] = []
-    @Published private(set) var förfluten: Double = 0
-    @Published private(set) var nivåJag: Float = 0
-    @Published private(set) var nivåMotpart: Float = 0
+    /// Klocka och nivåmätare bor i ett eget objekt. Publicerade direkt på
+    /// sessionen ritade de om hela huvudfönstret — sidopanel, mötesrader,
+    /// transkript — för varje ljudbit, tiotals gånger i sekunden.
+    let mätning = Mätning()
+    var förfluten: Double { mätning.förfluten }
     /// Sätts när efterbearbetningen med den stora modellen är igång.
     @Published private(set) var efterbearbetar = false
     /// Sätts medan motpartsspåret delas upp i röster.
@@ -38,6 +40,14 @@ final class Inspelningssession: ObservableObject {
     /// Mappen vars inspelning just nu efterbearbetas, så att raden i listan
     /// kan visa var arbetet står.
     @Published private(set) var bearbetadMapp: URL?
+
+    /// Om just den mappen efterbearbetas. Som sökväg: mappen ur en listning
+    /// slutar på «/», den byggda gör det inte, och `==` blev aldrig sant —
+    /// spärren mot «Flytta till» under arkivpasset slog aldrig till.
+    func bearbetar(_ mapp: URL) -> Bool {
+        guard let b = bearbetadMapp else { return false }
+        return Arkivet.kanonisk(b.path) == Arkivet.kanonisk(mapp.path)
+    }
     @Published private(set) var röstnamn: [Int: String] = [:]
     /// Varför efterbearbetningen föll senast. Tidigare försvann det i
     /// tysthet, och mötet stod som «live» för alltid.
@@ -49,6 +59,7 @@ final class Inspelningssession: ObservableObject {
     /// medan mikrofonen hör mig tala. Se `Ljudvakt`.
     @Published private(set) var ljudvarning: String?
     private var ljudvakt = Ljudvakt()
+    private var mikrofonvakt = Mikrofonvakt()
 
     /// Lyssnar efter frågeställningar medan samtalet pågår.
     let liveinsikter = Liveinsikter()
@@ -64,7 +75,7 @@ final class Inspelningssession: ObservableObject {
     /// Var inspelningen hamnar. Läsbar utifrån så att fönstret kan öppnas
     /// igen om det stängts medan inspelningen fortsatte.
     private(set) var placering: Placering?
-    private var mikrofonNamn: String?
+    private(set) var mikrofonNamn: String?
     private var kallade: [String] = []
     /// Mötets språk: "sv", "en" eller nil för att låta motorn avgöra —
     /// ett möte på svenska och norska har inget ett språk. Livefönstren
@@ -100,13 +111,15 @@ final class Inspelningssession: ObservableObject {
         livevarning = nil
         ljudvarning = nil
         ljudvakt = Ljudvakt()
+        mikrofonvakt = Mikrofonvakt()
         self.placering = placering
         self.titel = titel.isEmpty ? "Samtal" : titel
         self.mikrofonNamn = mikrofon?.namn
         self.kallade = kallade
         self.språk = språk
         yttranden = []
-        förfluten = 0
+        mätning.nollställ()
+        avbrottsorsak = nil
 
         do {
             läge = .förbereder("Kontrollerar behörigheter …")
@@ -149,11 +162,17 @@ final class Inspelningssession: ObservableObject {
             klocka = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
                 Task { @MainActor in
                     guard let s = self, s.pågår else { return }
-                    s.förfluten = Date().timeIntervalSince(s.start)
+                    s.mätning.förfluten = Date().timeIntervalSince(s.start)
                 }
             }
         } catch {
             await städa()
+            // En start som föll lämnade en mapp med två tomma wav-filer,
+            // och den syntes sedan som «påbörjad inspelning, 0 MB».
+            if let m = mapp {
+                try? FileManager.default.trashItem(at: m, resultingItemURL: nil)
+                mapp = nil
+            }
             läge = .fel(error.localizedDescription)
         }
     }
@@ -163,18 +182,22 @@ final class Inspelningssession: ObservableObject {
     private func tog(_ ram: Ljudram) {
         guard pågår, let b = buffring[ram.röst] else { return }
         let (mono, fönster) = b.mata(ram)
-        if !mono.isEmpty { skrivare[ram.röst]?.skriv(mono) }
+        if !mono.isEmpty, let s = skrivare[ram.röst] {
+            s.skriv(mono)
+            if let fel = s.fel { avbröt(fel); return }
+        }
 
         switch ram.röst {
-        case .jag: nivåJag = b.senasteNivå
-        case .motpart: nivåMotpart = b.senasteNivå
+        case .jag: mätning.visa(jag: b.senasteNivå)
+        case .motpart: mätning.visa(motpart: b.senasteNivå)
         }
+        let nollor = Ljudvakt.ärNollor(mono)
         let varnar = ljudvakt.tog(röst: ram.röst, tid: ram.tid,
-                                  nollor: Ljudvakt.ärNollor(mono),
-                                  tal: b.senasteBlockVarTal)
-        if varnar != (ljudvarning != nil) {
-            ljudvarning = varnar ? Ljudvakt.varning : nil
-        }
+                                  nollor: nollor, tal: b.senasteBlockVarTal)
+        if ram.röst == .jag, !mono.isEmpty { mikrofonvakt.tog(tid: ram.tid, nollor: nollor) }
+        let text = mikrofonvakt.varnar ? Mikrofonvakt.varning(mikrofonNamn)
+                 : varnar ? Ljudvakt.varning : nil
+        if text != ljudvarning { ljudvarning = text }
 
         guard let f = fönster else { return }
         köa(f, röst: ram.röst)
@@ -207,15 +230,41 @@ final class Inspelningssession: ObservableObject {
         }
     }
 
+    /// Strömmen stängdes av systemet: locket fälldes, skärmen låstes, en
+    /// ljudenhet försvann. Det som hunnit spelas in sparas som ett vanligt
+    /// möte — tidigare skrevs «klar» över med ett fel, fönstret gick tillbaka
+    /// till startformuläret och det såg ut som om allt var borta.
     private func avbröt(_ fel: Error) {
-        Task { await stoppa(); läge = .fel(fel.localizedDescription) }
+        guard pågår else { return }
+        let klockslag = Date().formatted(date: .omitted, time: .shortened)
+        avbrottsorsak = "Inspelningen avbröts kl. \(klockslag): \(fel.localizedDescription) "
+            + "Det som spelades in fram till dess är sparat."
+        Notiser.skicka(titel: "Inspelningen avbröts", text: avbrottsorsak ?? "",
+                       kund: placering?.kundnamn)
+        Task { await stoppa() }
     }
+
+    /// Varför inspelningen tog slut, när det inte var du som stoppade den.
+    @Published private(set) var avbrottsorsak: String?
+    /// Stoppet som pågår. Ett andra anrop — Stoppa-knappen samtidigt som
+    /// strömmen faller — väntar in det i stället för att spara och
+    /// efterbearbeta samma möte två gånger.
+    private var stoppet: Task<URL?, Never>?
 
     // MARK: - Stopp
 
     @discardableResult
     func stoppa() async -> URL? {
-        guard pågår || läge == .avslutar else { return nil }
+        if let pågående = stoppet { return await pågående.value }
+        guard pågår else { return nil }
+        let t = Task { await self.stoppaEnGång() }
+        stoppet = t
+        let mapp = await t.value
+        stoppet = nil
+        return mapp
+    }
+
+    private func stoppaEnGång() async -> URL? {
         läge = .avslutar
         liveinsikter.sluta()
         klocka?.invalidate(); klocka = nil
@@ -269,6 +318,13 @@ final class Inspelningssession: ObservableObject {
     /// och sammanfattning. Själva arbetet bor i `Efterbearbetning`; här
     /// speglas det till raden i huvudfönstret, och ett fel sägs i klartext
     /// i stället för att lämna mötet som «live» för alltid.
+    /// Arkivpasset som går, så att det kan avbrytas när appen avslutas.
+    /// Annars levde whisper-cli, MLX och pyannote kvar efter ⌘Q, och nästa
+    /// start kunde ta upp samma möte en gång till, parallellt.
+    private var efterbearbetningen: Task<Void, Never>?
+
+    func avbrytEfterbearbetning() { efterbearbetningen?.cancel() }
+
     private func efterbearbeta(_ inspelning: Inspelning, mapp: URL) {
         let kund = Arkivet.shared.kunder.first { $0.namn == inspelning.kund }
         let profiler = kund.map { Arkivet.shared.röstprofiler(för: $0) } ?? []
@@ -277,7 +333,7 @@ final class Inspelningssession: ObservableObject {
         efterbearbetningsandel = 0
         senasteArkivrad = ""
         bearbetadMapp = mapp
-        Task { [weak self] in
+        efterbearbetningen = Task { [weak self] in
             guard let self else { return }
             do {
                 let klar = try await Efterbearbetning.kör(
@@ -374,13 +430,19 @@ final class Spårskrivare {
         handtag.seekToEndOfFile()
     }
 
+    /// Satt när en skrivning föll — full disk, en utdragen extern disk.
+    /// `FileHandle.write(_:)` kastade då ett Objective-C-undantag, och appen
+    /// dog mitt i mötet med allt som inte hunnit få ett huvud.
+    private(set) var fel: Error?
+
     func skriv(_ prov: [Float]) {
+        guard fel == nil else { return }
         var d = Data(capacity: prov.count * 2)
         for p in prov {
             let v = Int16(max(-1, min(1, p)) * 32767)
             withUnsafeBytes(of: v.littleEndian) { d.append(contentsOf: $0) }
         }
-        handtag.write(d)
+        do { try handtag.write(contentsOf: d) } catch { fel = error; return }
         antalProv += prov.count
         sedanHuvud += prov.count
         if sedanHuvud >= Self.huvudintervall {
@@ -404,8 +466,8 @@ final class Spårskrivare {
     private func skrivUInt32(_ v: UInt32, vid offset: UInt64) {
         try? handtag.seek(toOffset: offset)
         var le = v.littleEndian
-        handtag.write(Data(bytes: &le, count: 4))
-        handtag.seekToEndOfFile()
+        try? handtag.write(contentsOf: Data(bytes: &le, count: 4))
+        _ = try? handtag.seekToEnd()
     }
 }
 
@@ -462,5 +524,62 @@ struct Ljudvakt {
             varnar = true
         }
         return varnar
+    }
+}
+
+/// Märker en mikrofon som inte ger något alls.
+///
+/// En riktig mikrofon har alltid ett golv av brus. Rena nollor betyder fel
+/// enhet — uppmätt den 24 november 2026: två försök med den virtuella
+/// «Microsoft Teams Audio» i ett möte i rummet gav exakt noll i varje prov
+/// på båda spåren, och det märktes först när arkivpasset inte hittade tal.
+struct Mikrofonvakt {
+    /// Sekunder nollor innan det sägs ifrån.
+    static let gräns: Double = 8
+
+    static func varning(_ namn: String?) -> String {
+        "Mikrofonen\(namn.map { " «\($0)»" } ?? "") ger inget ljud alls. "
+            + "Stoppa och välj en annan mikrofon — till exempel den inbyggda."
+    }
+
+    private var nollSedan: Double?
+    private(set) var varnar = false
+
+    mutating func tog(tid: Double, nollor: Bool) {
+        guard nollor else { nollSedan = nil; varnar = false; return }
+        if nollSedan == nil { nollSedan = tid }
+        if let n = nollSedan, tid - n >= Self.gräns { varnar = true }
+    }
+}
+
+/// Klockan och nivåmätarna under en inspelning, för sig.
+///
+/// Mätarna uppdateras högst femton gånger i sekunden — ljudbitarna kommer
+/// var tionde millisekund per spår, och ögat ser ingen skillnad.
+@MainActor
+final class Mätning: ObservableObject {
+    @Published var förfluten: Double = 0
+    @Published private(set) var jag: Float = 0
+    @Published private(set) var motpart: Float = 0
+    private var senastJag = Date.distantPast
+    private var senastMotpart = Date.distantPast
+
+    func visa(jag nivå: Float) {
+        let nu = Date()
+        guard nu.timeIntervalSince(senastJag) >= 1.0 / 15 else { return }
+        senastJag = nu
+        if nivå != jag { jag = nivå }
+    }
+
+    func visa(motpart nivå: Float) {
+        let nu = Date()
+        guard nu.timeIntervalSince(senastMotpart) >= 1.0 / 15 else { return }
+        senastMotpart = nu
+        if nivå != motpart { motpart = nivå }
+    }
+
+    func nollställ() {
+        förfluten = 0; jag = 0; motpart = 0
+        senastJag = .distantPast; senastMotpart = .distantPast
     }
 }

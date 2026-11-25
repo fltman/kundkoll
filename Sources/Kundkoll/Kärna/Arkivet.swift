@@ -241,7 +241,7 @@ final class Arkivet: ObservableObject {
 
     nonisolated func tidsposter(för kund: Kund) -> [Tidspost] {
         guard let data = try? Data(contentsOf: tidsfil(kund)),
-              let t = try? JSONDecoder.kundkoll.decode([Tidspost].self, from: data)
+              let t = try? JSONDecoder.kundkoll.decode(TåligLista<Tidspost>.self, from: data).värden
         else { return [] }
         return t.sorted { $0.start > $1.start }
     }
@@ -256,6 +256,7 @@ final class Arkivet: ObservableObject {
 
     private func sparaTidsposter(_ poster: [Tidspost], för kund: Kund) throws {
         let data = try JSONEncoder.kundkoll.encode(poster)
+        Self.säkraFöreÖverskrivning(tidsfil(kund), som: Tidspost.self)
         try data.write(to: tidsfil(kund), options: .atomic)
         try? skrivTidsnot(poster, hos: kund)
         sparningar += 1
@@ -337,13 +338,14 @@ final class Arkivet: ObservableObject {
 
     nonisolated func uppgifter(för kund: Kund) -> [Uppgift] {
         guard let data = try? Data(contentsOf: uppgiftsfil(kund)),
-              let u = try? JSONDecoder.kundkoll.decode([Uppgift].self, from: data)
+              let u = try? JSONDecoder.kundkoll.decode(TåligLista<Uppgift>.self, from: data).värden
         else { return [] }
         return u
     }
 
     func sparaUppgifter(_ uppgifter: [Uppgift], för kund: Kund) throws {
         let data = try JSONEncoder.kundkoll.encode(uppgifter)
+        Self.säkraFöreÖverskrivning(uppgiftsfil(kund), som: Uppgift.self)
         try data.write(to: uppgiftsfil(kund), options: .atomic)
         try skrivUppgiftsnot(uppgifter, hos: kund)
     }
@@ -417,13 +419,14 @@ final class Arkivet: ObservableObject {
 
     nonisolated func kopplade(för projekt: Projekt) -> [Kopplad] {
         guard let data = try? Data(contentsOf: kopplingsfil(projekt)),
-              let k = try? JSONDecoder.kundkoll.decode([Kopplad].self, from: data)
+              let k = try? JSONDecoder.kundkoll.decode(TåligLista<Kopplad>.self, from: data).värden
         else { return [] }
         return k
     }
 
     func sparaKopplade(_ mappar: [Kopplad], för projekt: Projekt) throws {
         let data = try JSONEncoder.kundkoll.encode(mappar)
+        Self.säkraFöreÖverskrivning(kopplingsfil(projekt), som: Kopplad.self)
         try data.write(to: kopplingsfil(projekt), options: .atomic)
     }
 
@@ -517,7 +520,7 @@ final class Arkivet: ObservableObject {
     nonisolated func kontakter(för kund: Kund) -> [Kontakt] {
         let url = kund.kontaktmapp.appending(path: "kontakter.json")
         guard let data = try? Data(contentsOf: url),
-              let k = try? JSONDecoder.kundkoll.decode([Kontakt].self, from: data)
+              let k = try? JSONDecoder.kundkoll.decode(TåligLista<Kontakt>.self, from: data).värden
         else { return [] }
         return k.sorted { $0.namn.localizedStandardCompare($1.namn) == .orderedAscending }
     }
@@ -525,6 +528,7 @@ final class Arkivet: ObservableObject {
     func sparaKontakter(_ kontakter: [Kontakt], för kund: Kund) throws {
         try fm.createDirectory(at: kund.kontaktmapp, withIntermediateDirectories: true)
         let data = try JSONEncoder.kundkoll.encode(kontakter)
+        Self.säkraFöreÖverskrivning(kund.kontaktmapp.appending(path: "kontakter.json"), som: Kontakt.self)
         try data.write(to: kund.kontaktmapp.appending(path: "kontakter.json"), options: .atomic)
         for k in kontakter { try skrivKontaktnot(k, hos: kund) }
     }
@@ -890,7 +894,7 @@ final class Arkivet: ObservableObject {
     func egnaRöstprofiler(för kund: Kund) -> [Röstprofil] {
         let url = kund.kontaktmapp.appending(path: "röstprofiler.json")
         guard let data = try? Data(contentsOf: url),
-              let p = try? JSONDecoder.kundkoll.decode([Röstprofil].self, from: data)
+              let p = try? JSONDecoder.kundkoll.decode(TåligLista<Röstprofil>.self, from: data).värden
         else { return [] }
         return p
     }
@@ -898,6 +902,7 @@ final class Arkivet: ObservableObject {
     func sparaRöstprofiler(_ profiler: [Röstprofil], för kund: Kund) throws {
         try fm.createDirectory(at: kund.kontaktmapp, withIntermediateDirectories: true)
         let data = try JSONEncoder.kundkoll.encode(profiler)
+        Self.säkraFöreÖverskrivning(kund.kontaktmapp.appending(path: "röstprofiler.json"), som: Röstprofil.self)
         try data.write(to: kund.kontaktmapp.appending(path: "röstprofiler.json"), options: .atomic)
     }
 
@@ -1140,6 +1145,45 @@ extension JSONEncoder {
     }()
 }
 
+// MARK: - Listfiler som inte får tömmas i tysthet
+
+/// En lista där en enskild trasig post hoppas över i stället för att hela
+/// filen blir oläslig. Tidigare gav en enda post med ett okänt värde — ett
+/// nytt läge på en uppgift, säg — en tom lista, och nästa sparning skrev
+/// den tomma listan över allt som fanns.
+struct TåligLista<T: Decodable>: Decodable {
+    var värden: [T] = []
+
+    init(from decoder: Decoder) throws {
+        var c = try decoder.unkeyedContainer()
+        while !c.isAtEnd {
+            if let v = try? c.decode(T.self) { värden.append(v) }
+            else { _ = try? c.decode(Hoppa.self) }
+        }
+    }
+
+    /// Läser ett värde utan att använda det, för att komma förbi det.
+    private struct Hoppa: Decodable { init(from decoder: Decoder) throws {} }
+}
+
+extension Arkivet {
+    /// Lägger undan en listfil innan den skrivs över, om den inte går att
+    /// läsa fullt ut — då innehåller den något som nästa sparning annars
+    /// skulle radera för gott. Kopian hamnar bredvid, med datum i namnet.
+    nonisolated static func säkraFöreÖverskrivning<T: Decodable>(_ fil: URL, som: T.Type) {
+        guard let data = try? Data(contentsOf: fil), !data.isEmpty else { return }
+        let rå = (try? JSONSerialization.jsonObject(with: data)) as? [Any]
+        let lästa = (try? JSONDecoder.kundkoll.decode(TåligLista<T>.self, from: data))?.värden.count
+        if let rå, let lästa, lästa == rå.count { return }
+        let stämpel = Date().formatted(.iso8601.year().month().day().time(includingFractionalSeconds: false))
+            .replacingOccurrences(of: ":", with: "")
+        let kopia = fil.deletingPathExtension()
+            .appendingPathExtension("oläslig-\(stämpel)")
+            .appendingPathExtension(fil.pathExtension)
+        try? FileManager.default.copyItem(at: fil, to: kopia)
+    }
+}
+
 extension JSONDecoder {
     static let kundkoll: JSONDecoder = {
         let d = JSONDecoder()
@@ -1367,12 +1411,29 @@ extension Arkivet {
         let stämpel = DateFormatter.mappnamn.string(from: inspelning.inledd)
         let rot = mapp.deletingLastPathComponent()
         var nyMapp = rot.appending(path: "\(stämpel) \(städa(titel))")
+        // Jämförs som sökvägar, inte som URL:er: mappen ur en listning slutar
+        // på «/» och en byggd gör det inte, så `!=` var alltid sant. Ett namn
+        // som städades till samma («Cloud / AI» → «Cloud - AI») eller bara
+        // bytte skiftläge flyttade då mötet till «… 2». APFS skiljer inte på
+        // skiftläge, så det jämförs utan.
+        func sammaPlats(_ a: URL, _ b: URL) -> Bool {
+            Self.kanonisk(a.path).lowercased() == Self.kanonisk(b.path).lowercased()
+        }
         var n = 2
-        while fm.fileExists(atPath: nyMapp.path) && nyMapp != mapp {
+        while fm.fileExists(atPath: nyMapp.path) && !sammaPlats(nyMapp, mapp) {
             nyMapp = rot.appending(path: "\(stämpel) \(städa(titel)) \(n)")
             n += 1
         }
-        if nyMapp != mapp { try fm.moveItem(at: mapp, to: nyMapp) }
+        if Self.kanonisk(nyMapp.path) != Self.kanonisk(mapp.path) {
+            if sammaPlats(nyMapp, mapp) {
+                // Bara skiftläget: via ett tillfälligt namn, annars vägrar flytten.
+                let mellan = rot.appending(path: ".namnbyte-\(UUID().uuidString)")
+                try fm.moveItem(at: mapp, to: mellan)
+                try fm.moveItem(at: mellan, to: nyMapp)
+            } else {
+                try fm.moveItem(at: mapp, to: nyMapp)
+            }
+        }
         cache.glöm(mapp.appending(path: "möte.json"))
         var ny = inspelning
         ny.titel = titel
@@ -1401,7 +1462,7 @@ extension Arkivet {
         let målrot = placering.inspelningsrot
         try fm.createDirectory(at: målrot, withIntermediateDirectories: true)
         var nyMapp = målrot.appending(path: mapp.lastPathComponent)
-        guard nyMapp != mapp else { return (inspelning, mapp) }
+        guard Self.kanonisk(nyMapp.path) != Self.kanonisk(mapp.path) else { return (inspelning, mapp) }
         var n = 2
         while fm.fileExists(atPath: nyMapp.path) {
             nyMapp = målrot.appending(path: "\(mapp.lastPathComponent) \(n)")

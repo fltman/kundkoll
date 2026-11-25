@@ -33,6 +33,7 @@ struct Namnblad: View {
             HStack {
                 Spacer()
                 Button("Avbryt") { stäng() }
+                    .keyboardShortcut(.cancelAction)
                 Button("Spara", action: genomför)
                     .keyboardShortcut(.defaultAction)
                     .disabled(rent.isEmpty || rent == nuvarande)

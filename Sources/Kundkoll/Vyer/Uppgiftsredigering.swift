@@ -108,6 +108,7 @@ struct Uppgiftsredigering: View {
                 }
                 Spacer()
                 Button("Avbryt") { stäng() }
+                    .keyboardShortcut(.cancelAction)
                 Button("Spara") { spara() }
                     .keyboardShortcut(.defaultAction)
                     .disabled(uppgift.vad.trimmingCharacters(in: .whitespaces).isEmpty)

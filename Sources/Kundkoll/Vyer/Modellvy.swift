@@ -92,6 +92,7 @@ struct Modellvy: View {
                 }
                 Spacer()
                 Button("Avbryt") { stäng() }
+                    .keyboardShortcut(.cancelAction)
                     .accessibilityIdentifier("inställningar.avbryt")
                 Button("Spara", action: spara).keyboardShortcut(.defaultAction)
             }

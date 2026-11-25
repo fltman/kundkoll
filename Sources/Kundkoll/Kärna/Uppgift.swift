@@ -78,8 +78,10 @@ struct Uppgift: Codable, Hashable, Identifiable {
         när = try c.decodeIfPresent(String.self, forKey: .när)
         senast = try c.decodeIfPresent(Date.self, forKey: .senast)
         påminnelse = try c.decodeIfPresent(String.self, forKey: .påminnelse)
-        läge = try c.decodeIfPresent(Läge.self, forKey: .läge) ?? .attGöra
-        ursprung = try c.decodeIfPresent(Ursprung.self, forKey: .ursprung) ?? .egen
+        // `try?`: ett okänt läge — från en nyare version, eller handskrivet —
+        // kastar annars, och decodeIfPresent hjälper inte mot det.
+        läge = (try? c.decodeIfPresent(Läge.self, forKey: .läge)) ?? .attGöra
+        ursprung = (try? c.decodeIfPresent(Ursprung.self, forKey: .ursprung)) ?? .egen
         källa = try c.decodeIfPresent(String.self, forKey: .källa)
         källtitel = try c.decodeIfPresent(String.self, forKey: .källtitel)
         projekt = try c.decodeIfPresent(String.self, forKey: .projekt)

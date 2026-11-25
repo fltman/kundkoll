@@ -23,10 +23,12 @@ on run argv
 		repeat with konto in accounts
 			set kontonamn to name of konto
 
-			-- Inkorgen: mejl från personen
+			-- Inkorgen: mejl från personen. Exakt adress, inom <> eller ensam:
+			-- "contains adress" tog också hanna@ och johanna@ när kontakten
+			-- var anna@, och deras mejl hamnade i kundens kunskapsbank.
 			set raknare to 0
 			try
-				set traffar to (every message of mailbox "INBOX" of konto whose sender contains adress)
+				set traffar to (every message of mailbox "INBOX" of konto whose sender contains ("<" & adress & ">") or sender is adress)
 				repeat with m in traffar
 					if raknare >= grans then exit repeat
 					set raknare to raknare + 1

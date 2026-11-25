@@ -81,6 +81,27 @@ struct Yttrande: Identifiable, Hashable, Codable {
     var start: Double
     var slut: Double
 
+    init(id: UUID = UUID(), röst: Röst, text: String, röstgrupp: Int? = nil,
+         start: Double, slut: Double) {
+        self.id = id; self.röst = röst; self.text = text
+        self.röstgrupp = röstgrupp; self.start = start; self.slut = slut
+    }
+
+    // Handskriven, som alla typer som skrivs till disk: en möte.json bär
+    // hundratals yttranden, och ett enda som inte gick att läsa tog med sig
+    // hela inspelningen ur listan.
+    private enum CodingKeys: String, CodingKey { case id, röst, text, röstgrupp, start, slut }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = (try? c.decodeIfPresent(UUID.self, forKey: .id)) ?? UUID()
+        röst = (try? c.decodeIfPresent(Röst.self, forKey: .röst)) ?? .motpart
+        text = (try? c.decodeIfPresent(String.self, forKey: .text)) ?? ""
+        röstgrupp = try? c.decodeIfPresent(Int.self, forKey: .röstgrupp)
+        start = (try? c.decodeIfPresent(Double.self, forKey: .start)) ?? 0
+        slut = (try? c.decodeIfPresent(Double.self, forKey: .slut)) ?? start
+    }
+
     var tidsstämpel: String {
         let t = Int(start)
         return String(format: "%02d:%02d", t / 60, t % 60)

@@ -35,14 +35,40 @@ final class Ljudinfångning: NSObject {
     struct Mikrofon: Identifiable, Hashable {
         let id: String
         let namn: String
+        /// Programvaruenheter som «Microsoft Teams Audio», BlackHole eller
+        /// Zooms. De hör ingenting i rummet — uppmätt: rena nollor.
+        var virtuell = false
+
+        /// Så som den står i väljaren.
+        var visatNamn: String { virtuell ? "\(namn) (virtuell)" : namn }
     }
 
+    /// Riktiga mikrofoner först, virtuella sist.
     static func mikrofoner() -> [Mikrofon] {
-        AVCaptureDevice.DiscoverySession(
+        let enheter = AVCaptureDevice.DiscoverySession(
             deviceTypes: [.microphone, .external],
             mediaType: .audio,
             position: .unspecified
-        ).devices.map { Mikrofon(id: $0.uniqueID, namn: $0.localizedName) }
+        ).devices.map {
+            Mikrofon(id: $0.uniqueID, namn: $0.localizedName, virtuell: ärVirtuell($0))
+        }
+        return enheter.filter { !$0.virtuell } + enheter.filter(\.virtuell)
+    }
+
+    /// Vilken mikrofon ett nytt möte ska få: den som valdes sist, om den
+    /// finns och är riktig, annars systemets förval, annars första riktiga.
+    /// Aldrig en virtuell i onödan — det var så gårdagens tomma möten kom till.
+    static func förval(bland lista: [Mikrofon], sparad: String) -> Mikrofon? {
+        if let m = lista.first(where: { $0.id == sparad && !$0.virtuell }) { return m }
+        if let std = AVCaptureDevice.default(for: .audio),
+           let m = lista.first(where: { $0.id == std.uniqueID && !$0.virtuell }) { return m }
+        return lista.first { !$0.virtuell } ?? lista.first
+    }
+
+    private static func ärVirtuell(_ enhet: AVCaptureDevice) -> Bool {
+        // kAudioDeviceTransportTypeVirtual, 'virt'. En hopslagen enhet
+        // ('grup') kan bestå av riktiga mikrofoner och räknas inte hit.
+        enhet.transportType == Int32(bitPattern: 0x76697274)
     }
 
     // MARK: - Behörigheter
@@ -65,7 +91,10 @@ final class Ljudinfångning: NSObject {
         // skulle nästa möte räkna sina tider från förra mötets slut.
         nolltid = nil
         let innehåll = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
-        guard let skärm = innehåll.displays.first else { throw Fel.ingenSkärm }
+        // Huvudskärmen, inte den första i listan: med en extern skärm kunde
+        // det bli den, och kopplades den loss dog inspelningen med den.
+        guard let skärm = innehåll.displays.first(where: { $0.displayID == CGMainDisplayID() })
+                ?? innehåll.displays.first else { throw Fel.ingenSkärm }
 
         let konf = SCStreamConfiguration()
         // Minsta tillåtna bildyta, långsammast möjliga takt. Rutorna kastas.

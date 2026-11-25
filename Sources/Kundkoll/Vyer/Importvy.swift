@@ -101,6 +101,7 @@ struct Importvy: View {
             Spacer()
             HStack {
                 Button("Avbryt") { stäng() }
+                    .keyboardShortcut(.cancelAction)
                     .accessibilityIdentifier("import.avbryt")
                 Spacer()
                 Button(Importkö.delad.pågår ? "Lägg i kön" : "Lägg till", action: kör)

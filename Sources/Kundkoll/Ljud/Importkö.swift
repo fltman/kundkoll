@@ -55,8 +55,15 @@ final class Importkö: ObservableObject {
     var pågår: Bool { aktuell != nil }
 
     /// Om mappen just nu bearbetas eller väntar på det.
-    func gäller(_ mapp: URL) -> Bool {
-        aktuellMapp == mapp || väntande.contains { $0.mapp == mapp }
+    func gäller(_ mapp: URL) -> Bool { ärAktuell(mapp) || väntar(mapp) }
+
+    // Som sökvägar: en mapp ur en listning slutar på «/», en byggd inte.
+    func ärAktuell(_ mapp: URL) -> Bool {
+        aktuellMapp.map { Arkivet.kanonisk($0.path) == Arkivet.kanonisk(mapp.path) } ?? false
+    }
+
+    func väntar(_ mapp: URL) -> Bool {
+        väntande.contains { $0.mapp.map { Arkivet.kanonisk($0.path) == Arkivet.kanonisk(mapp.path) } ?? false }
     }
 
     func köa(källa: URL, placering: Placering, titel: String,

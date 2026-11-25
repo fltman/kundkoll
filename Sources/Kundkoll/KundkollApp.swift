@@ -240,6 +240,13 @@ final class Appdelegat: NSObject, NSApplicationDelegate {
                     try? await Task.sleep(for: .milliseconds(250))
                 }
             }
+            // Passet sparar «Avbrutet.» och tas upp igen vid nästa start.
+            if session.efterbearbetar {
+                session.avbrytEfterbearbetning()
+                for _ in 0..<40 where session.efterbearbetar {
+                    try? await Task.sleep(for: .milliseconds(250))
+                }
+            }
             Importkö.delad.sparaUndan()
             await Whisper.delad.avsluta()
             klart.klar = true
@@ -299,6 +306,20 @@ struct Kundkoll: App {
                 Button("Hoppa till …") { NotificationCenter.default.post(name: .palett, object: nil) }
                     .keyboardShortcut("k", modifiers: .command)
             }
+            // Inspelningen ska gå att starta och stoppa utan att leta efter
+            // knappen — särskilt stoppa, som annars bara fanns i fönstret
+            // och på raden längst ned.
+            CommandMenu("Inspelning") {
+                Button("Spela in …") { NotificationCenter.default.post(name: .spelaIn, object: nil) }
+                    .keyboardShortcut("r", modifiers: [.command, .shift])
+                Button("Visa inspelningen") { Inspelningsfönster.visa() }
+                    .keyboardShortcut("r", modifiers: [.command, .option])
+                Divider()
+                Button("Stoppa inspelningen") {
+                    Task { await Inspelningssession.delad.stoppa() }
+                }
+                .keyboardShortcut(".", modifiers: .command)
+            }
             CommandGroup(after: .appSettings) {
                 Button("Inställningar …") {
                     NotificationCenter.default.post(name: .visaNyckel, object: nil)
@@ -315,6 +336,7 @@ extension Notification.Name {
     static let sök = Notification.Name("kundkoll.sök")
     static let palett = Notification.Name("kundkoll.palett")
     static let visaOm = Notification.Name("kundkoll.visaOm")
+    static let spelaIn = Notification.Name("kundkoll.spelaIn")
     /// Skickas när ett notisklick vill öppna en kund; objektet är kundnamnet
     /// och userInfo kan bära mötets id för en briefing.
     static let öppnaKund = Notification.Name("kundkoll.öppnaKund")

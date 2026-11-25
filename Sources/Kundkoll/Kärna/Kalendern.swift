@@ -46,6 +46,10 @@ final class Kalendern: ObservableObject {
         var möteslänk: URL?
 
         var pågår: Bool { let nu = Date(); return start <= nu && nu <= slut }
+        /// `id` är EventKits och samma för varje gång ett återkommande möte
+        /// äger rum — rätt för möteskopplingar, som gäller serien, men fel
+        /// för notiser och listor, där varje tillfälle är för sig.
+        var förekomst: String { "\(id)|\(Int(start.timeIntervalSince1970))" }
         var längd: Double { slut.timeIntervalSince(start) }
     }
 

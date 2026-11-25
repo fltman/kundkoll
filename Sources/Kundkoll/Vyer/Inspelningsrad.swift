@@ -16,8 +16,7 @@ struct Inspelningsrad: View {
                         .fill(.red)
                         .frame(width: 8, height: 8)
                         .symbolEffect(.pulse)
-                    Text(formateraLängd(session.förfluten))
-                        .font(.callout.monospacedDigit())
+                    Inspelningsklocka(mätning: session.mätning, font: .callout)
                     Text(session.titel)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
@@ -41,7 +40,7 @@ struct Inspelningsrad: View {
                 }
                 Spacer()
                 if session.pågår {
-                    nivåer
+                    Nivåmätare(mätning: session.mätning, bredd: 34, etiketter: false)
                     Button("Visa") { Inspelningsfönster.visa() }
                     Button {
                         Task { await session.stoppa() }
@@ -57,19 +56,38 @@ struct Inspelningsrad: View {
         }
     }
 
-    private var nivåer: some View {
-        HStack(spacing: 8) {
-            mätare(session.nivåJag, .blue)
-            mätare(session.nivåMotpart, .purple)
+}
+
+/// Inspelningens klocka. Egen vy, så att bara den ritas om varje kvartssekund.
+struct Inspelningsklocka: View {
+    @ObservedObject var mätning: Mätning
+    var font: Font
+
+    var body: some View {
+        Text(formateraLängd(mätning.förfluten)).font(font.monospacedDigit())
+    }
+}
+
+/// Nivåmätarna för de två spåren. Egen vy av samma skäl som klockan.
+struct Nivåmätare: View {
+    @ObservedObject var mätning: Mätning
+    var bredd: CGFloat
+    var etiketter: Bool
+
+    var body: some View {
+        HStack(spacing: etiketter ? 12 : 8) {
+            mätare("Jag", mätning.jag, .blue)
+            mätare("Motpart", mätning.motpart, .purple)
         }
     }
 
-    private func mätare(_ nivå: Float, _ färg: Color) -> some View {
-        Capsule()
-            .fill(.quaternary)
-            .frame(width: 34, height: 4)
-            .overlay(alignment: .leading) {
-                Capsule().fill(färg).frame(width: 34 * CGFloat(min(1, nivå)), height: 4)
-            }
+    private func mätare(_ namn: String, _ nivå: Float, _ färg: Color) -> some View {
+        HStack(spacing: 6) {
+            if etiketter { Text(namn).font(.caption).foregroundStyle(.secondary) }
+            Capsule().fill(.quaternary).frame(width: bredd, height: 4)
+                .overlay(alignment: .leading) {
+                    Capsule().fill(färg).frame(width: bredd * CGFloat(min(1, nivå)), height: 4)
+                }
+        }
     }
 }

@@ -142,6 +142,15 @@ enum Efterbearbetning {
                 + "och tryck sedan «Sammanfatta mötet»."
         }
         i.bearbetas = false
+        // Passet bär en kopia från starten. Tryckte man «Sammanfatta mötet»
+        // medan det gick skrevs den sammanfattningen över med ingenting.
+        if i.sammanfattning == nil {
+            let påDisk = utgångspunkt(i, mapp: mapp)
+            if let s = påDisk.sammanfattning {
+                i.sammanfattning = s
+                i.sammanfattningsfel = nil
+            }
+        }
         let klar = i
         try await MainActor.run {
             try Arkivet.shared.spara(klar, i: mapp)

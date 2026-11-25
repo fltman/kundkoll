@@ -262,7 +262,7 @@ struct Projektinnehåll: View {
                     .fixedSize(horizontal: false, vertical: true)
             } else {
                 VStack(spacing: 0) {
-                    ForEach(Array(möten.enumerated()), id: \.element.id) { i, m in
+                    ForEach(Array(möten.enumerated()), id: \.element.förekomst) { i, m in
                         Mötesrad(möte: m, kund: kund, projekt: projekt,
                                  förbered: { briefing = $0 }) {
                             Button {

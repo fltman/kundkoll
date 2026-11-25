@@ -121,6 +121,7 @@ struct Röstvy: View {
                     .foregroundStyle(.secondary)
                 Spacer()
                 Button("Avbryt") { stäng() }
+                    .keyboardShortcut(.cancelAction)
                     .accessibilityIdentifier("röster.avbryt")
                 Button("Spara", action: spara)
                     .keyboardShortcut(.defaultAction)
