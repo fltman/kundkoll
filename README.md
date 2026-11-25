@@ -372,7 +372,7 @@ fönstret först, gör flera försök, och faller tillbaka på hela skärmen.
 ```bash
 ./scripts/bygg-app.sh                                        # dist/Bjarbys kundkoll.app
 K=$(swift build --show-bin-path)/Kundkoll                    # var binären hamnar beror på Swift-versionen
-$K --test              # 816 enhetstester
+$K --test              # 835 enhetstester
 $K --prov-ljud f.wav   # hela kedjan skarpt
 $K --prov-röst ljud.wav w.json facit.json
 $K --prov-import fil.mp4 fil.m4a

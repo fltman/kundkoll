@@ -35,6 +35,7 @@ enum Tester {
         obsidian()
         kunskapsbanken()
         granskningen()
+        rummet()
         return Prov.sammanfatta()
     }
 
@@ -3049,4 +3050,86 @@ extension Tester {
             Prov.lika(m.jag, 0.5, "en andra nivå inom en femtondels sekund väntar")
         }
     }
+
+    // MARK: - Möte i rummet
+
+    static func rummet() {
+        Prov.svit("Möte i rummet")
+        let fm = FileManager.default
+
+        Prov.kolla(Inspelningssession.låterSomRummet(datortal: 0, mikrofontal: 186),
+                   "tyst datorljud och tal i mikrofonen är ett möte i rummet (som 24 november)")
+        Prov.kolla(!Inspelningssession.låterSomRummet(datortal: 1114, mikrofontal: 788),
+                   "ett Teamsmöte med tal på båda spåren är det inte")
+        Prov.kolla(!Inspelningssession.låterSomRummet(datortal: 0, mikrofontal: 8),
+                   "ett kort tyst försök är det inte heller")
+
+        do {   // blandningen av mikrofon och datorljud
+            let rot = fm.temporaryDirectory.appending(path: "kundkoll-rum-\(UUID().uuidString)")
+            defer { try? fm.removeItem(at: rot) }
+            try! fm.createDirectory(at: rot, withIntermediateDirectories: true)
+            let mik = [Float](repeating: 0.25, count: 16_000 * 3)
+            let dator = [Float](repeating: 0.25, count: 16_000 * 2)
+            try! Wav.data(av: mik).write(to: rot.appending(path: "jag.wav"))
+            try! Wav.data(av: dator).write(to: rot.appending(path: "motpart.wav"))
+            try! Rumsljud.förbered(rot)
+            Prov.kolla(Rumsljud.ärBlandad(rot), "mappen blir blandad")
+            Prov.kolla(fm.fileExists(atPath: rot.appending(path: "mikrofon.wav").path)
+                       && fm.fileExists(atPath: rot.appending(path: "datorljud.wav").path),
+                       "originalen sparas som mikrofon.wav och datorljud.wav")
+            Prov.lika(Wav.längd(av: rot.appending(path: "motpart.wav")), 3, "blandningen är lika lång som det längsta spåret")
+            let tidigt = Wav.prov(ur: rot.appending(path: "motpart.wav"), från: 1, sekunder: 0.01)
+            let sent = Wav.prov(ur: rot.appending(path: "motpart.wav"), från: 2.5, sekunder: 0.01)
+            Prov.kolla(abs((tidigt.first ?? 0) - 0.5) < 0.01, "där båda hörs läggs de ihop")
+            Prov.kolla(abs((sent.first ?? 0) - 0.25) < 0.01, "efter datorljudets slut hörs bara mikrofonen")
+            let före = try? Data(contentsOf: rot.appending(path: "motpart.wav"))
+            try! Rumsljud.förbered(rot)
+            Prov.kolla(före == (try? Data(contentsOf: rot.appending(path: "motpart.wav"))),
+                       "en andra körning blandar inte en gång till")
+        }
+
+        do {   // avbrott mitt i: datorljudet hann flyttas, mikrofonen inte
+            let rot = fm.temporaryDirectory.appending(path: "kundkoll-rum-\(UUID().uuidString)")
+            defer { try? fm.removeItem(at: rot) }
+            try! fm.createDirectory(at: rot, withIntermediateDirectories: true)
+            try! Wav.data(av: [Float](repeating: 0.1, count: 16_000)).write(to: rot.appending(path: "jag.wav"))
+            try! Wav.data(av: [Float](repeating: 0.1, count: 16_000)).write(to: rot.appending(path: "datorljud.wav"))
+            try! Rumsljud.förbered(rot)
+            let p = Wav.prov(ur: rot.appending(path: "motpart.wav"), från: 0.5, sekunder: 0.01)
+            Prov.kolla(abs((p.first ?? 0) - 0.2) < 0.01, "blandningen tas upp där den avbröts")
+        }
+
+        do {   // min egen röst
+            let (arkiv, rot) = tillfälligt()
+            defer { try? fm.removeItem(at: rot) }
+            let kund = try! arkiv.skapaKund(namn: "Acme")
+            Prov.kolla(arkiv.minRöst() == nil, "ingen egen röst från början")
+            let a = Avtryck(vektor: [1, 0, 0], sekunder: 8)
+            try! arkiv.lärDigRöst(namn: Röstprofil.jagNamn, avtryck: a, hos: kund)
+            Prov.lika(arkiv.minRöst()?.avtryck.count, 1, "«Jag» lärs in som min egen röst")
+            Prov.kolla(arkiv.egnaRöstprofiler(för: kund).isEmpty, "och blir ingen röst hos kunden")
+            try! arkiv.lärDigMinRöst(Avtryck(vektor: [0, 1, 0], sekunder: 2))
+            Prov.lika(arkiv.minRöst()?.avtryck.count, 1, "för korta bitar lärs inte in")
+
+            var digitalt = Inspelning(titel: "T", inledd: Date(), längd: 1, kund: "Acme", projekt: nil,
+                                      mikrofon: nil, liveYttranden: [], arkivYttranden: nil)
+            Prov.kolla(!arkiv.röstprofiler(för: digitalt, hos: kund).contains { $0.namn == Röstprofil.jagNamn },
+                       "via datorn jämförs inte motparten med min röst")
+            digitalt.rumsmöte = true
+            Prov.kolla(arkiv.röstprofiler(för: digitalt, hos: kund).contains { $0.namn == Röstprofil.jagNamn },
+                       "i rummet gör den det")
+        }
+
+        do {   // etiketter i ett enspårigt möte
+            let jag = Yttrande(röst: .jag, text: "Hej", start: 0, slut: 1)
+            Prov.lika(jag.etikett([:], enspårig: true), "Jag", "en rad från mig heter «Jag» även enspårigt")
+            let grupp = Yttrande(röst: .motpart, text: "Hej", röstgrupp: 1, start: 0, slut: 1)
+            Prov.lika(grupp.etikett([1: Röstprofil.jagNamn], enspårig: true), "Jag",
+                      "en igenkänd grupp i rummet heter «Jag»")
+            let json = #"{"titel":"Gammalt möte"}"#
+            Prov.kolla((try? JSONDecoder.kundkoll.decode(Inspelning.self, from: Data(json.utf8)))?.rumsmöte == false,
+                       "äldre möten utan flaggan läses som via datorn")
+        }
+    }
 }
+

@@ -113,6 +113,7 @@ final class Ljudbuffring {
         tystSedanProv = nil
         senasteNivå = 0
         senasteBlockVarTal = false
+        talSekunder = 0
         konverterare = nil
         källformat = nil
     }
@@ -166,6 +167,7 @@ final class Ljudbuffring {
             senasteBlockVarTal = nivå >= golv() * Self.talfaktor
             if senasteBlockVarTal {
                 talProv += antal
+                talSekunder += Double(antal) / Self.målfrekvens
                 tystSedanProv = nil
             } else if tystSedanProv == nil {
                 tystSedanProv = vägdaProv - antal
@@ -190,6 +192,8 @@ final class Ljudbuffring {
     private(set) var senasteNivå: Float = 0
     /// Om det senast vägda blocket räknades som tal.
     private(set) var senasteBlockVarTal = false
+    /// Hur mycket tal spåret haft sedan inspelningen började.
+    private(set) var talSekunder: Double = 0
 
     /// Mätaren är logaritmisk. Linjärt skulle tal från den inbyggda
     /// mikrofonen — RMS omkring 0,01 — knappt synas alls.
@@ -322,3 +326,100 @@ enum Wav {
         return true
     }
 }
+
+// MARK: - Möte i rummet
+
+/// Gör ett möte i rummet till ett spår med alla röster.
+///
+/// I rummet talar alla in i samma mikrofon, och mitt spår är inte bara
+/// jag. Satt någon med via datorn hörs hen på datorljudet. Båda blandas
+/// därför till motpart.wav — där röstanalysen letar efter personer — och
+/// originalen sparas orörda som mikrofon.wav och datorljud.wav.
+enum Rumsljud {
+    static let mikrofonfil = "mikrofon.wav"
+    static let datorljudfil = "datorljud.wav"
+
+    /// Om mappen redan är blandad.
+    static func ärBlandad(_ mapp: URL) -> Bool {
+        let fm = FileManager.default
+        return fm.fileExists(atPath: mapp.appending(path: mikrofonfil).path)
+            && fm.fileExists(atPath: mapp.appending(path: "motpart.wav").path)
+            && !fm.fileExists(atPath: mapp.appending(path: "jag.wav").path)
+    }
+
+    /// Blandar spåren om det inte redan är gjort. Tål att avbrytas var som
+    /// helst: originalen flyttas undan först efter att blandningen skrivits,
+    /// och nästa körning börjar om från det som finns.
+    static func förbered(_ mapp: URL) throws {
+        guard !ärBlandad(mapp) else { return }
+        let fm = FileManager.default
+        func fil(_ n: String) -> URL { mapp.appending(path: n) }
+        func finns(_ u: URL) -> Bool { fm.fileExists(atPath: u.path) }
+        let jag = fil("jag.wav"), motpart = fil("motpart.wav")
+        let mik = fil(mikrofonfil), dator = fil(datorljudfil)
+
+        let mikKälla = finns(jag) ? jag : mik
+        guard finns(mikKälla) else { throw Enkeltfel("Mikrofonspåret saknas.") }
+        // motpart.wav är datorljudet bara så länge jag.wav finns kvar;
+        // efter ett avbrott kan den redan vara flyttad till datorljud.wav.
+        let datorKälla: URL? = finns(dator) ? dator : (finns(jag) && finns(motpart) ? motpart : nil)
+
+        let blandning = fil("rum-blandning.wav")
+        try? fm.removeItem(at: blandning)
+        try blanda(mikKälla, datorKälla, till: blandning)
+
+        if datorKälla == motpart { try fm.moveItem(at: motpart, to: dator) }
+        if mikKälla == jag { try fm.moveItem(at: jag, to: mik) }
+        if finns(motpart) { try fm.removeItem(at: motpart) }
+        try fm.moveItem(at: blandning, to: motpart)
+    }
+
+    /// Lägger ihop två 16 kHz mono-wav prov för prov, tio sekunder i taget.
+    static func blanda(_ a: URL, _ b: URL?, till ut: URL) throws {
+        for u in [a, b].compactMap({ $0 }) { _ = try? Wav.rättaHuvud(i: u) }
+        let la = Int(Wav.längd(av: a) * Ljudbuffring.målfrekvens)
+        let lb = b.map { Int(Wav.längd(av: $0) * Ljudbuffring.målfrekvens) } ?? 0
+        let antal = max(la, lb)
+
+        FileManager.default.createFile(atPath: ut.path, contents: nil)
+        let skrivare = try FileHandle(forWritingTo: ut)
+        defer { try? skrivare.close() }
+        var huvud = Wav.data(av: [])
+        func sätt(_ v: UInt32, _ plats: Int) {
+            withUnsafeBytes(of: v.littleEndian) { huvud.replaceSubrange(plats..<plats + 4, with: $0) }
+        }
+        sätt(UInt32(36 + antal * 2), 4)
+        sätt(UInt32(antal * 2), 40)
+        try skrivare.write(contentsOf: huvud)
+
+        let läsA = try FileHandle(forReadingFrom: a)
+        defer { try? läsA.close() }
+        let läsB = try b.map { try FileHandle(forReadingFrom: $0) }
+        defer { try? läsB?.close() }
+        try läsA.seek(toOffset: UInt64(Wav.huvudlängd))
+        try läsB?.seek(toOffset: UInt64(Wav.huvudlängd))
+
+        let bit = Int(Ljudbuffring.målfrekvens) * 10
+        var kvar = antal
+        while kvar > 0 {
+            let n = min(bit, kvar)
+            let da = (try läsA.read(upToCount: n * 2)) ?? Data()
+            let db = (try läsB?.read(upToCount: n * 2)) ?? Data()
+            var blandat = [Int16](repeating: 0, count: n)
+            da.withUnsafeBytes { r in
+                let p = r.bindMemory(to: Int16.self)
+                for i in 0..<min(n, p.count) { blandat[i] = Int16(littleEndian: p[i]) }
+            }
+            db.withUnsafeBytes { r in
+                let p = r.bindMemory(to: Int16.self)
+                for i in 0..<min(n, p.count) {
+                    let summa = Int32(blandat[i]) + Int32(Int16(littleEndian: p[i]))
+                    blandat[i] = Int16(clamping: summa)
+                }
+            }
+            try skrivare.write(contentsOf: blandat.withUnsafeBufferPointer { Data(buffer: $0) })
+            kvar -= n
+        }
+    }
+}
+

@@ -58,6 +58,11 @@ struct Röstprofil: Codable, Hashable, Identifiable {
         samtal = try c.decodeIfPresent(Int.self, forKey: .samtal) ?? 1
     }
 
+    /// Namnet min egen röst får. Samma ord som etiketten på mitt spår i ett
+    /// tvåspårigt möte, så att «Jag» betyder samma sak i varje transkript —
+    /// och sammanfattningen vet vem det är.
+    static let jagNamn = Röst.jag.etikett
+
     /// Hur väl ett nytt avtryck stämmer med profilen. Bästa träffen räknas —
     /// samma person kan låta olika i olika samtal, och ett dåligt avtryck ska
     /// inte dra ned de bra.

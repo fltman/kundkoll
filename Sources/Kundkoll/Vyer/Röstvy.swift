@@ -70,7 +70,8 @@ struct Röstvy: View {
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Vem är vem?").font(.headline)
-                        Text("\(grupper.count) röster på motpartsspåret"
+                        Text("\(grupper.count) röster " + (inspelning.rumsmöte ? "i rummet"
+                             : inspelning.enspårig ? "i inspelningen" : "på motpartsspåret")
                              + (inspelning.röstmetod.map { " · delade med \($0)" } ?? ""))
                             .font(.caption).foregroundStyle(.secondary)
                     }
@@ -116,7 +117,9 @@ struct Röstvy: View {
 
             Divider()
             HStack {
-                Text("Namn du sätter sparas som röstavtryck hos \(kund.namn) och känns igen nästa gång.")
+                Text(inspelning.enspårig
+                     ? "Namn sparas som röstavtryck hos \(kund.namn). «Det här är jag» lär appen din egen röst, för alla kunder."
+                     : "Namn du sätter sparas som röstavtryck hos \(kund.namn) och känns igen nästa gång.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Spacer()
@@ -131,7 +134,8 @@ struct Röstvy: View {
         .frame(width: 660, height: 520)
         .onAppear {
             namn = inspelning.röstnamn
-            profiler = arkiv.röstprofiler(för: kund)
+            // I rummet är jag en av rösterna; min profil jämförs då också.
+            profiler = arkiv.röstprofiler(för: inspelning, hos: kund)
             kontakter = arkiv.kontakter(för: kund)
         }
     }
@@ -194,6 +198,12 @@ struct Röstvy: View {
                     get: { namn[g.grupp] ?? "" },
                     set: { namn[g.grupp] = $0.isEmpty ? nil : $0 }))
                     .textFieldStyle(.roundedBorder)
+                // I ett enspårigt möte — i rummet eller importerat — kan en
+                // av rösterna vara jag.
+                if inspelning.enspårig {
+                    Button("Det här är jag") { namn[g.grupp] = Röstprofil.jagNamn }
+                        .disabled(namn[g.grupp] == Röstprofil.jagNamn)
+                }
                 let alternativ = förslag(för: g.grupp)
                 if !alternativ.isEmpty {
                     Menu("Välj") {
@@ -247,8 +257,9 @@ struct Röstvy: View {
         }
         // En person man satt namn på hör till kunden. Att behöva lägga upp
         // hen en gång till som kontakt vore onödigt dubbelarbete.
+        // Utom jag själv: jag är ingen kontakt hos kunden.
         for personnamn in Set(inspelning.röstnamn.values)
-        where !kontakter.contains(where: { $0.namn == personnamn }) {
+        where personnamn != Röstprofil.jagNamn && !kontakter.contains(where: { $0.namn == personnamn }) {
             try? arkiv.läggTill(Kontakt(namn: personnamn), hos: kund)
         }
 

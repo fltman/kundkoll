@@ -213,7 +213,7 @@ final class Arkivet: ObservableObject {
         let kund = kunder.first { $0.namn == inspelning.kund }
         let uppdelning = await Röstanalys().delaUpp(
             fil: fil, yttranden: inspelning.yttranden, antal: antal,
-            profiler: kund.map { röstprofiler(för: $0) } ?? [])
+            profiler: röstprofiler(för: inspelning, hos: kund))
 
         var ut = inspelning
         ut.arkivYttranden = uppdelning.yttranden
@@ -907,7 +907,51 @@ final class Arkivet: ObservableObject {
     }
 
     /// Lägger ett nytt avtryck till rätt person, eller skapar personen.
+    // MARK: - Min egen röst
+
+    /// Min röst, gemensam för alla kunder. Andras röster hålls per kund,
+    /// men min är densamma överallt, och det är den som skiljer mig från de
+    /// andra i rummet när alla talar i samma mikrofon. Ligger bara här.
+    nonisolated private var minRöstfil: URL {
+        rot.appending(path: ".kundkoll").appending(path: "min-röst.json")
+    }
+
+    nonisolated func minRöst() -> Röstprofil? {
+        guard let data = try? Data(contentsOf: minRöstfil),
+              let p = try? JSONDecoder.kundkoll.decode(Röstprofil.self, from: data),
+              !p.avtryck.isEmpty else { return nil }
+        return p
+    }
+
+    /// Lär in ett avtryck av min röst. Tolv i stället för åtta platser:
+    /// mikrofonen i rummet låter annorlunda än headsetet i Teams, och
+    /// båda behöver få plats.
+    nonisolated func lärDigMinRöst(_ avtryck: Avtryck) throws {
+        guard avtryck.sekunder >= Tröskel.minstaProfilLängd else { return }
+        var p = minRöst() ?? Röstprofil(namn: Röstprofil.jagNamn, avtryck: [], samtal: 0)
+        let före = p.avtryck.count
+        p.lärDig(avtryck, tak: 12)
+        guard p.avtryck.count != före || före == 12 else { return }
+        p.samtal += 1
+        try FileManager.default.createDirectory(at: minRöstfil.deletingLastPathComponent(),
+                                                withIntermediateDirectories: true)
+        try JSONEncoder.kundkoll.encode(p).write(to: minRöstfil, options: .atomic)
+    }
+
+    /// Kundens röster, och min egen när mötet hölls i rummet — där är jag
+    /// en av rösterna som ska kännas igen.
+    func röstprofiler(för inspelning: Inspelning, hos kund: Kund?) -> [Röstprofil] {
+        var alla = kund.map { röstprofiler(för: $0) } ?? []
+        if inspelning.rumsmöte, let jag = minRöst() {
+            alla.removeAll { $0.namn == Röstprofil.jagNamn }
+            alla.append(jag)
+        }
+        return alla
+    }
+
     func lärDigRöst(namn: String, avtryck: Avtryck, hos kund: Kund) throws {
+        // Mitt eget namn blir ingen profil hos kunden.
+        if namn == Röstprofil.jagNamn { try lärDigMinRöst(avtryck); return }
         // Lärs alltid in hos den egna kunden, även när delning är påslagen.
         var profiler = egnaRöstprofiler(för: kund)
         if let i = profiler.firstIndex(where: { $0.namn == namn }) {
@@ -976,7 +1020,8 @@ final class Arkivet: ObservableObject {
         if !i.efterbearbetad {
             ut += "\n> Live-transkript. Efterbearbetning med KB-Whisper ger interpunktion och bättre egennamn.\n"
         }
-        let deltagare = Set(i.röstnamn.values).sorted()
+        // Jag själv är ingen kontaktnot att länka till.
+        let deltagare = Set(i.röstnamn.values).subtracting([Röstprofil.jagNamn]).sorted()
         if !deltagare.isEmpty {
             ut += "\nDeltagare: " + deltagare.map { "[[\($0)]]" }.joined(separator: ", ") + "\n"
         }

@@ -208,3 +208,37 @@ tar sekunder i stället för minuter. Ta bort `.avtryck-cache.json` när du är 
 
 Facit är en lista med `{"namn", "start", "slut"}`. Provet skriver ut en
 förvirringsmatris och andelen turer som hamnat i rätt grupp.
+
+## Möte i rummet
+
+I rummet talar alla, jag också, in i samma mikrofon. Mitt spår är då inte
+bara jag, och tvåspårsmodellen («Jag» mot «Motpart») lägger hela mötet under
+«Jag». Uppmätt 24 november 2026: fyra möten på plats, datorljudet rena nollor
+i alla fyra, mikrofonen 1–4 minuters tal — allt hamnade under «Jag».
+
+Vägen nu:
+
+- **Var** väljs vid start, «Via datorn» eller «I rummet». Kalendern
+  föreslår: en möteslänk är via datorn, inget länk är på plats. Tyst
+  datorljud och minst 30 s tal i mikrofonen gör mötet till ett rumsmöte
+  oavsett val (`Inspelningssession.låterSomRummet`). Varningen om dött
+  datorljud har en knapp «Mötet är i rummet».
+- Efter mötet blandas mikrofon och datorljud till `motpart.wav`
+  (`Rumsljud`); originalen sparas som `mikrofon.wav` och `datorljud.wav`.
+  Sitter några med via datorn samtidigt hörs de i blandningen. Sedan tar
+  passet samma väg som en importerad fil: ett spår, pyannote delar upp alla.
+  Antalet från kalendern räknas +1, eftersom de kallade räknas utan mig.
+- **Min röst** är den enda profil som är gemensam för alla kunder, i
+  `<Kunder>/.kundkoll/min-röst.json`. Den lärs in (1) ur mitt spår i möten
+  via datorn — bara när datorljudet haft minst 60 s tal, annars satt alla
+  troligen i rummet och mitt spår är också de andra — och (2) från
+  «Det här är jag» i «Vem är vem». Den känns igen som gruppen «Jag», blir
+  aldrig kontakt hos kunden och länkas inte som deltagare.
+- Äldre möten kan göras om: högerklick → «Det var ett möte i rummet».
+
+Uppmätt med pyannote på tre av mötena från 24 november: 3, 3 och 3 röster
+där allt tidigare var «Jag». Min röst mellan två mikrofoner (MacBook mot
+AirPods, möten via datorn): likhet 0,26–0,57. Ingen av rösterna i de tre
+rumsmötena liknade min (0,05–0,22) — troligen sa jag lite i dem, men det är
+inte bekräftat. Igenkänningen av mig i rummet är alltså inte bevisad på
+riktigt material än; «Det här är jag» ger ett avtryck från rummets mikrofon.

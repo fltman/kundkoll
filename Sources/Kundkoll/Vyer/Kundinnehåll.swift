@@ -774,6 +774,13 @@ struct Inspelningslista: View {
                             Button("På engelska") { körOm(rad.0, rad.1, språk: "en") }
                             Button("Låt motorn avgöra") { körOm(rad.0, rad.1, språk: nil) }
                         }
+                        // Ett möte som spelades in som «via datorn» men hölls i
+                        // rummet: alla hamnade under «Jag».
+                        if !rad.0.rumsmöte && !rad.0.enspårig {
+                            Button("Det var ett möte i rummet — dela upp alla röster") {
+                                tillRummet(rad.0, rad.1)
+                            }
+                        }
                     }
                     Divider()
                     Button("Flytta till papperskorgen", role: .destructive) { kasta(rad.0, rad.1) }
@@ -791,7 +798,7 @@ struct Inspelningslista: View {
                 HStack(spacing: 6) {
                     Text(DateFormatter.klocka.string(from: i.inledd))
                     if let p = i.projekt { Text("· \(p)") }
-                    if i.enspårig { Text("· importerad") }
+                    if i.rumsmöte { Text("· i rummet") } else if i.enspårig { Text("· importerad") }
                     let namn = Set(i.röstnamn.values).sorted()
                     if !namn.isEmpty { Text("· \(namn.joined(separator: ", "))").lineLimit(1) }
                     if let steg = pågår(mapp) {
@@ -872,6 +879,13 @@ struct Inspelningslista: View {
 
     /// Kör arkivpasset igen. Namn som satts för hand lärs först in som
     /// röstavtryck, så att personerna känns igen när rösterna delas om.
+    private func tillRummet(_ i: Inspelning, _ mapp: URL) {
+        var ny = i
+        ny.rumsmöte = true
+        try? arkiv.spara(ny, i: mapp)
+        körOm(ny, mapp, språk: i.språk)
+    }
+
     private func körOm(_ i: Inspelning, _ mapp: URL, språk: String?) {
         let placering: Placering = i.projekt.flatMap { namn in
             arkiv.projekt(för: kund).first { $0.namn == namn }.map { .projekt($0) }

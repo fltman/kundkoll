@@ -595,7 +595,9 @@ struct Transkriptvy: View {
     private func färg(_ y: Yttrande) -> Color {
         guard y.röst == .motpart || inspelning.enspårig else { return .blue }
         let paletten: [Color] = [.purple, .orange, .teal, .pink, .indigo, .brown]
-        guard let g = y.röstgrupp else { return .purple }
+        guard let g = y.röstgrupp else { return y.röst == .jag ? .blue : .purple }
+        // I rummet är jag en av grupperna — samma blå som mitt eget spår.
+        if inspelning.röstnamn[g] == Röstprofil.jagNamn { return .blue }
         return paletten[g % paletten.count]
     }
 }

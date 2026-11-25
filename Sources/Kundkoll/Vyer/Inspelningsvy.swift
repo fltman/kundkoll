@@ -23,6 +23,10 @@ struct Inspelningsvy: View {
     /// välja om varje gång. "auto" står för «avgör själv».
     @AppStorage("kundkoll.inspelningsspråk") private var sparatSpråk = "sv"
     @State private var mikrofoner: [Ljudinfångning.Mikrofon] = []
+    /// Möte i rummet — alla talar i min mikrofon — eller via datorn.
+    @State private var iRummet = false
+    /// Det man valde sist, när kalendern inte säger något.
+    @AppStorage("kundkoll.iRummet") private var sparatIRummet = false
     @State private var valdMikrofon: Ljudinfångning.Mikrofon?
     @State private var projektlista: [Projekt] = []
 
@@ -53,6 +57,9 @@ struct Inspelningsvy: View {
         valtProjekt = projekt
         språk = sparatSpråk == "auto" ? nil : sparatSpråk
         if titel.isEmpty { titel = möte?.titel ?? "" }
+        // Kalendern vet oftast: en Teams- eller Zoomlänk är ett möte via
+        // datorn, ett möte utan länk hålls på plats.
+        iRummet = möte.map { $0.möteslänk == nil } ?? sparatIRummet
 
         // Startat från ett möte: allt som behövs är redan känt — men bara
         // om mikrofonen är den man valde sist och en riktig. Annars visas
@@ -86,6 +93,14 @@ struct Inspelningsvy: View {
                       + "av mötet där någon talar — för möten på flera språk. "
                       + "KB-Whisper översätter allt till svenska, så andra språk "
                       + "än svenska tar arkivvägen via MLX eller molnet.")
+                Picker("Var", selection: $iRummet) {
+                    Text("Via datorn (Teams, Zoom …)").tag(false)
+                    Text("I rummet").tag(true)
+                }
+                .help("I rummet talar alla — du också — i samma mikrofon. Efter mötet "
+                      + "delas alla röster upp, och du känns igen på din röst. Sitter "
+                      + "några med via datorn samtidigt: välj I rummet, datorljudet "
+                      + "läggs ihop med rummet.")
                 Picker("Mikrofon", selection: $valdMikrofon) {
                     ForEach(mikrofoner) { m in Text(m.visatNamn).tag(Ljudinfångning.Mikrofon?.some(m)) }
                 }
@@ -107,8 +122,10 @@ struct Inspelningsvy: View {
             }
             .formStyle(.grouped)
 
-            Label("Datorljudet spelas in på ett eget spår, så att du och motparten hålls isär i transkriptet.",
-                  systemImage: "waveform")
+            Label(iRummet
+                  ? "Alla i rummet hörs i mikrofonen. Efter mötet delas rösterna upp, och du känns igen på din röst."
+                  : "Datorljudet spelas in på ett eget spår, så att du och motparten hålls isär i transkriptet.",
+                  systemImage: iRummet ? "person.3" : "waveform")
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -158,6 +175,9 @@ struct Inspelningsvy: View {
                 Circle().fill(.red).frame(width: 9, height: 9).symbolEffect(.pulse)
                 Inspelningsklocka(mätning: session.mätning, font: .title3)
                 Text(session.titel).foregroundStyle(.secondary).lineLimit(1)
+                if session.rumsmöte {
+                    Label("I rummet", systemImage: "person.3").font(.caption).foregroundStyle(.tertiary)
+                }
                 if let m = session.mikrofonNamn {
                     Label(m, systemImage: "mic").font(.caption).foregroundStyle(.tertiary).lineLimit(1)
                 }
@@ -167,12 +187,18 @@ struct Inspelningsvy: View {
             .padding(.horizontal, 16).padding(.vertical, 12)
             Divider()
             ForEach([session.ljudvarning, session.livevarning].compactMap { $0 }, id: \.self) { varning in
-                Label(varning, systemImage: "exclamationmark.triangle")
-                    .font(.callout)
-                    .foregroundStyle(.orange)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 16).padding(.vertical, 8)
+                HStack(spacing: 12) {
+                    Label(varning, systemImage: "exclamationmark.triangle")
+                        .font(.callout)
+                        .foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    // Tyst datorljud är väntat i ett möte på plats.
+                    if varning == Ljudvakt.varning {
+                        Button("Mötet är i rummet") { session.ärIRummet() }
+                    }
+                }
+                .padding(.horizontal, 16).padding(.vertical, 8)
                 Divider()
             }
 
@@ -313,6 +339,7 @@ struct Inspelningsvy: View {
         guard let mikrofon = valdMikrofon else { return }
         sparadMikrofon = mikrofon.id
         sparatSpråk = språk ?? "auto"
+        if möte == nil { sparatIRummet = iRummet }
         let placering: Placering = valtProjekt.map { .projekt($0) } ?? .kund(kund)
         let namn = titel.trimmingCharacters(in: .whitespaces)
         Task {
@@ -321,7 +348,8 @@ struct Inspelningsvy: View {
                 titel: namn.isEmpty ? (möte?.titel ?? "Samtal") : namn,
                 mikrofon: mikrofon,
                 kallade: möte?.deltagare.filter { !$0.ärJag }.map(\.namn) ?? [],
-                språk: språk)
+                språk: språk,
+                rumsmöte: iRummet)
         }
     }
 }

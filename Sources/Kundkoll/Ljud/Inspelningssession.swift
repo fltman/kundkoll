@@ -59,6 +59,20 @@ final class Inspelningssession: ObservableObject {
     /// medan mikrofonen hör mig tala. Se `Ljudvakt`.
     @Published private(set) var ljudvarning: String?
     private var ljudvakt = Ljudvakt()
+    /// Mötet hålls i rummet: alla talar i min mikrofon. Då är ett tyst
+    /// datorljud väntat, och efteråt delas alla röster upp, min med.
+    @Published private(set) var rumsmöte = false
+
+    /// Under tre sekunder tal från datorn mot minst trettio i mikrofonen.
+    nonisolated static func låterSomRummet(datortal: Double, mikrofontal: Double) -> Bool {
+        datortal < 3 && mikrofontal >= 30
+    }
+
+    /// Ändrar sig mitt i mötet — från varningen om tyst datorljud.
+    func ärIRummet() {
+        rumsmöte = true
+        if ljudvarning == Ljudvakt.varning { ljudvarning = nil }
+    }
     private var mikrofonvakt = Mikrofonvakt()
 
     /// Lyssnar efter frågeställningar medan samtalet pågår.
@@ -101,7 +115,7 @@ final class Inspelningssession: ObservableObject {
 
     func starta(placering: Placering, titel: String,
                 mikrofon: Ljudinfångning.Mikrofon?, kallade: [String] = [],
-                språk: String? = "sv") async {
+                språk: String? = "sv", rumsmöte: Bool = false) async {
         // Efter ett fel, eller ett färdigt möte som lämnats kvar, ska nästa
         // «Spela in» fungera — tidigare krävdes en omstart av appen.
         switch läge {
@@ -117,6 +131,7 @@ final class Inspelningssession: ObservableObject {
         self.mikrofonNamn = mikrofon?.namn
         self.kallade = kallade
         self.språk = språk
+        self.rumsmöte = rumsmöte
         yttranden = []
         mätning.nollställ()
         avbrottsorsak = nil
@@ -196,7 +211,7 @@ final class Inspelningssession: ObservableObject {
                                   nollor: nollor, tal: b.senasteBlockVarTal)
         if ram.röst == .jag, !mono.isEmpty { mikrofonvakt.tog(tid: ram.tid, nollor: nollor) }
         let text = mikrofonvakt.varnar ? Mikrofonvakt.varning(mikrofonNamn)
-                 : varnar ? Ljudvakt.varning : nil
+                 : varnar && !rumsmöte ? Ljudvakt.varning : nil
         if text != ljudvarning { ljudvarning = text }
 
         guard let f = fönster else { return }
@@ -285,7 +300,7 @@ final class Inspelningssession: ObservableObject {
         await whisper.stoppaServer()
 
         guard let mapp, let placering else { läge = .vilande; return nil }
-        let inspelning = Inspelning(
+        var inspelning = Inspelning(
             titel: titel,
             inledd: start,
             längd: slut,
@@ -297,6 +312,12 @@ final class Inspelningssession: ObservableObject {
             kallade: kallade,
             språk: språk
         )
+        // Var datorljudet tyst hela mötet medan mikrofonen hörde tal satt alla
+        // i rummet, vad som än valdes — så var det med alla fyra mötena den
+        // 24 november.
+        let datortal = buffring[.motpart]?.talSekunder ?? 0
+        let mikrofontal = buffring[.jag]?.talSekunder ?? 0
+        inspelning.rumsmöte = rumsmöte || Self.låterSomRummet(datortal: datortal, mikrofontal: mikrofontal)
         do {
             try Arkivet.shared.spara(inspelning, i: mapp)
         } catch {

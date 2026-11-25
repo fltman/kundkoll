@@ -118,6 +118,7 @@ struct Yttrande: Identifiable, Hashable, Codable {
     /// I en importerad inspelning finns ingen "motpart" — bara röster.
     func etikett(_ namn: [Int: String], enspårig: Bool) -> String {
         guard enspårig else { return etikett(namn) }
+        if röst == .jag && röstgrupp == nil { return Röst.jag.etikett }
         guard let g = röstgrupp else { return "Röst" }
         return namn[g] ?? "Röst \(g + 1)"
     }
@@ -150,6 +151,12 @@ struct Inspelning: Codable, Identifiable, Hashable {
     /// ingen uppdelning i mitt spår och motpartens — alla röster ligger i ett,
     /// och en av dem kan vara jag.
     var enspårig = false
+    /// Ett möte i rummet: alla — även jag — talade in i samma mikrofon, så
+    /// mitt spår är inte bara jag. Efter mötet blandas mikrofonen och
+    /// datorljudet till ett spår (motpart.wav; originalen sparas som
+    /// mikrofon.wav och datorljud.wav) och alla röster delas upp, min med.
+    /// Jag känns igen på min egen röstprofil och heter då «Jag».
+    var rumsmöte = false
     /// Namnet på filen den importerades från.
     var källfil: String?
     /// Mötets språk: "sv", "en" eller nil för att låta motorn avgöra.
@@ -225,6 +232,7 @@ struct Inspelning: Codable, Identifiable, Hashable {
         röstnamn = try c.decodeIfPresent([Int: String].self, forKey: .röstnamn) ?? [:]
         kallade = try c.decodeIfPresent([String].self, forKey: .kallade) ?? []
         enspårig = try c.decodeIfPresent(Bool.self, forKey: .enspårig) ?? false
+        rumsmöte = try c.decodeIfPresent(Bool.self, forKey: .rumsmöte) ?? false
         källfil = try c.decodeIfPresent(String.self, forKey: .källfil)
         språk = try c.decodeIfPresent(String.self, forKey: .språk)
         sammanfattning = try c.decodeIfPresent(Mötessammanfattning.self, forKey: .sammanfattning)

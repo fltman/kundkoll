@@ -62,6 +62,21 @@ enum Efterbearbetning {
                     språk: String?, väntadeRöster: Int? = nil,
                     vidLäge: @Sendable @escaping (Läge) -> Void) async throws -> Inspelning {
         let fm = FileManager.default
+        // Ett möte i rummet blir ett spår med alla röster innan något annat
+        // händer — då tar resten av passet samma väg som en importerad fil.
+        // Flaggan läses ur mappens möte.json oavsett id: en omkörning via
+        // Import.slutför bygger en ny stomme som inte vet något om rummet.
+        let påDisk = (try? Data(contentsOf: mapp.appending(path: "möte.json")))
+            .flatMap { try? JSONDecoder.kundkoll.decode(Inspelning.self, from: $0) }
+        let rum = ursprunglig.rumsmöte || påDisk?.rumsmöte == true || Rumsljud.ärBlandad(mapp)
+        if rum {
+            vidLäge(Läge(fas: .transkriberar, steg: "Lägger ihop rummets ljud", andel: 0))
+            try Rumsljud.förbered(mapp)
+        }
+        // I rummet är jag en av rösterna och ska kännas igen som «Jag».
+        let profiler = rum
+            ? profiler.filter { $0.namn != Röstprofil.jagNamn } + [Arkivet.shared.minRöst()].compactMap { $0 }
+            : profiler
         let jag = mapp.appending(path: "jag.wav")
         let motpart = mapp.appending(path: "motpart.wav")
         var spår: [(Röst, URL)] = []
@@ -72,6 +87,7 @@ enum Efterbearbetning {
         for (_, url) in spår { _ = try? Wav.rättaHuvud(i: url) }
 
         var i = utgångspunkt(ursprunglig, mapp: mapp)
+        if rum { i.rumsmöte = true; i.enspårig = true }
         i.bearbetas = true
         i.arkivfel = nil
         i.sammanfattningsfel = nil
@@ -110,7 +126,8 @@ enum Efterbearbetning {
             vidLäge(Läge(fas: .röster, steg: "Delar upp rösterna", andel: nil))
             let uppdelning = await Röstanalys().delaUpp(
                 fil: motpart, yttranden: rader,
-                antal: väntadeRöster ?? (i.kallade.isEmpty ? nil : i.kallade.count),
+                // De kallade räknas utan mig; i rummet talar jag på samma spår.
+                antal: väntadeRöster ?? (i.kallade.isEmpty ? nil : i.kallade.count + (rum ? 1 : 0)),
                 profiler: profiler,
                 vidLäge: { steg in vidLäge(Läge(fas: .röster, steg: steg, andel: nil)) })
             try Task.checkCancellation()
@@ -120,6 +137,10 @@ enum Efterbearbetning {
             i.röstvarning = uppdelning.varning
             i.röstavtryck = uppdelning.avtryck
             try await spara(i, i: mapp)
+
+            // Ett vanligt möte via datorn: mitt spår är bara jag, och det är
+            // så appen lär sig min röst till nästa möte i rummet.
+            if !rum { await läraMinRöst(ur: i, jagfil: jag) }
         } catch {
             i.bearbetas = false
             i.arkivfel = error is CancellationError ? "Avbrutet." : error.localizedDescription
@@ -159,6 +180,24 @@ enum Efterbearbetning {
             }
         }
         return klar
+    }
+
+    /// Lär in min röst ur mitt spår — bara när datorljudet hade riktiga
+    /// samtal. Var det tyst satt alla troligen i rummet, och då är mitt
+    /// spår också de andra: det var precis så den 24 november såg ut.
+    static func läraMinRöst(ur i: Inspelning, jagfil: URL) async {
+        guard !i.enspårig, FileManager.default.fileExists(atPath: jagfil.path) else { return }
+        let motpartstal = i.yttranden.filter { $0.röst == .motpart }
+            .reduce(0.0) { $0 + ($1.slut - $1.start) }
+        guard motpartstal >= 60 else { return }
+        let turer = Röstanalys.turer(av: i.yttranden.filter { $0.röst == .jag })
+            .sorted { $0.längd > $1.längd }
+            .prefix(3)
+        guard !turer.isEmpty,
+              let par = try? await Röstanalys().avtryck(fil: jagfil, turer: Array(turer)),
+              let bästa = par.map(\.1).max(by: { $0.sekunder < $1.sekunder })
+        else { return }
+        try? Arkivet.shared.lärDigMinRöst(bästa)
     }
 
     @MainActor
